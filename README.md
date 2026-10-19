@@ -7,7 +7,7 @@ issues through an explicit command.
 
 Plugin ID: `dev.vspex.jira-mark`
 
-The version is defined in the root `build.gradle` as `version = '0.1.1'`.
+The version is defined in the root `build.gradle` as `version = '0.1.2'`.
 Both publishing helpers use that version. For local development, use a composite build, Maven
 Local, or the CLI distribution. Portal installation requires a published and
 approved release.
@@ -96,6 +96,7 @@ Published versions are fixed; choose a new version for each release. Without
 | --- | --- |
 | `Website URL not set` | Set `website` in `gradlePlugin` in `gradle-plugin/build.gradle`. This repository now supplies the GitHub website and `vcsUrl`. |
 | `-SNAPSHOT plugin versions not supported` | Set a fixed release version in the root `build.gradle`. |
+| Artifact already exists with a different hash | The Portal already has different content for that version. Choose a new version in the root `build.gradle`; clearing the configuration cache will not replace the stored artifact. |
 | `mise` is not recognized | Use the direct Gradle commands above with JDK 21 available. |
 
 See the [Gradle Plugin Portal publishing guide](https://plugins.gradle.org/docs/publish-plugin)
@@ -147,8 +148,8 @@ Publish a development build into your local Maven repository from this repositor
 
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.1.1`) and do not upload to the Plugin
-Portal. To test a snapshot locally, set a version such as `0.1.2-SNAPSHOT` in
+from the root `build.gradle` (currently `0.1.2`) and do not upload to the Plugin
+Portal. To test a snapshot locally, set a version such as `0.1.3-SNAPSHOT` in
 `build.gradle` before publishing to Maven Local.
 
 In the consumer's `settings.gradle`, configure plugin resolution:
@@ -168,18 +169,18 @@ version you published locally:
 
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.1.1'
+    id 'dev.vspex.jira-mark' version '0.1.2'
 }
 ```
 
 ### Gradle Plugin Portal
 
-Once release `0.1.1` is published and approved, consumers can apply it without
+Once release `0.1.2` is published and approved, consumers can apply it without
 a local checkout or Maven Local:
 
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.1.1'
+    id 'dev.vspex.jira-mark' version '0.1.2'
 }
 ```
 
