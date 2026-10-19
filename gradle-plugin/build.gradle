@@ -12,9 +12,14 @@ gradlePlugin {
         jiraMark {
             id = 'dev.vspex.jira-mark'
             displayName = 'Jira Mark'
-            description = 'Repository-owned Markdown profiles for Jira ticket workflows.'
+            description = 'Define reusable Jira ticket profiles with YAML configuration and Markdown guidance stored in your repository. Preview ticket drafts offline, validate fields against Jira Cloud, import profiles from existing issues, and create issues through explicit Gradle tasks.'
             tags = ['jira', 'automation', 'markdown']
             implementationClass = 'dev.vspex.jira.mark.gradle.JiraMarkPlugin'
+            compatibility(it) {
+                features {
+                    configurationCache = true
+                }
+            }
         }
     }
 }
