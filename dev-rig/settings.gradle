@@ -1,0 +1,8 @@
+pluginManagement {
+    includeBuild('..')
+    repositories {
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+rootProject.name = 'jira-mark-dev-rig'

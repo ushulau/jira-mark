@@ -1,0 +1,5 @@
+{
+  "summary": "Login requests time out after token refresh",
+  "description": "Reproduce by refreshing an expired session and retrying login.",
+  "labels": ["backend", "authentication"]
+}

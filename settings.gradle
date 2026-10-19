@@ -1,0 +1,2 @@
+rootProject.name = 'jira-mark'
+include 'core', 'jira-cloud', 'cli', 'gradle-plugin'

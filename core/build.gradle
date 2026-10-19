@@ -1,0 +1,4 @@
+// Gradle-independent profile loading, validation, and ticket draft resolution.
+dependencies {
+    implementation "org.yaml:snakeyaml:${rootProject.ext.snakeYamlVersion}"
+}

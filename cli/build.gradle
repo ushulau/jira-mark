@@ -1,0 +1,15 @@
+plugins { id 'application' }
+
+dependencies {
+    implementation project(':core')
+    implementation project(':jira-cloud')
+}
+application {
+    mainClass = 'dev.vspex.jira.mark.cli.Main'
+    applicationName = 'jira-mark'
+}
+
+tasks.named('test', Test) {
+    dependsOn tasks.named('installDist')
+    systemProperty 'jiraMark.cliInstall', layout.buildDirectory.dir('install/jira-mark').get().asFile.absolutePath
+}

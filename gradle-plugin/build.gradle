@@ -1,0 +1,54 @@
+plugins {
+    id 'java-gradle-plugin'
+    id 'maven-publish'
+    id 'com.gradle.plugin-publish'
+}
+
+gradlePlugin {
+    plugins {
+        jiraMark {
+            id = 'dev.vspex.jira-mark'
+            displayName = 'Jira Mark'
+            description = 'Repository-owned Markdown profiles for Jira ticket workflows.'
+            tags = ['jira', 'automation', 'markdown']
+            implementationClass = 'dev.vspex.jira.mark.gradle.JiraMarkPlugin'
+        }
+    }
+}
+
+dependencies {
+    // Bundle our own core; retain SnakeYAML as a normal published runtime dependency.
+    compileOnly project(':core')
+    compileOnly project(':jira-cloud')
+    implementation "org.yaml:snakeyaml:${rootProject.ext.snakeYamlVersion}"
+    testImplementation project(':core')
+}
+tasks.named('jar', Jar) {
+    from(project(':core').sourceSets.main.output)
+    from(project(':jira-cloud').sourceSets.main.output)
+}
+tasks.named('pluginUnderTestMetadata') {
+    pluginClasspath.from(project(':core').sourceSets.main.output)
+    pluginClasspath.from(project(':jira-cloud').sourceSets.main.output)
+}
+
+testing {
+    suites {
+        functionalTest(JvmTestSuite) {
+            useJUnitJupiter()
+            dependencies {
+                implementation project()
+                implementation project(':core')
+                implementation gradleTestKit()
+                implementation "org.junit.jupiter:junit-jupiter:${rootProject.ext.junitBomVersion}"
+            }
+        }
+    }
+}
+tasks.named('processFunctionalTestResources') { from(tasks.named('pluginUnderTestMetadata')) }
+tasks.named('check') { dependsOn testing.suites.functionalTest }
+
+tasks.named('functionalTest', Test) {
+    dependsOn tasks.named('jar')
+    systemProperty 'jiraMark.pluginJar', tasks.named('jar', Jar).get().archiveFile.get().asFile.absolutePath
+}

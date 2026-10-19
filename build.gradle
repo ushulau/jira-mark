@@ -1,0 +1,48 @@
+plugins {
+    id 'base'
+    id 'com.diffplug.spotless' version '6.25.0' apply false
+    id 'com.gradle.plugin-publish' version '2.2.1' apply false
+}
+
+ext {
+    junitBomVersion = '5.11.4'
+    snakeYamlVersion = '2.6'
+}
+
+subprojects {
+    apply plugin: 'java'
+    apply plugin: 'com.diffplug.spotless'
+
+    group = 'dev.vspex'
+    version = '0.1.0-SNAPSHOT'
+
+    java {
+        toolchain { languageVersion = JavaLanguageVersion.of(21) }
+    }
+    tasks.withType(JavaCompile).configureEach { options.release = 17 }
+    repositories { mavenCentral() }
+
+    dependencies {
+        testImplementation platform("org.junit:junit-bom:${rootProject.ext.junitBomVersion}")
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    }
+    tasks.withType(Test).configureEach { useJUnitPlatform() }
+    spotless {
+        lineEndings 'UNIX'
+        java {
+            googleJavaFormat()
+            endWithNewline()
+            trimTrailingWhitespace()
+        }
+    }
+}
+
+tasks.register('spotlessApply') {
+    group = 'formatting'
+    description = 'Formats Java in all modules.'
+    dependsOn(subprojects.collect { it.tasks.named('spotlessApply') })
+}
+tasks.named('check') { dependsOn(subprojects.collect { it.tasks.named('check') }) }
+tasks.named('build') { dependsOn(subprojects.collect { it.tasks.named('build') }) }
+tasks.named('clean') { dependsOn(subprojects.collect { it.tasks.named('clean') }) }
