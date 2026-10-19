@@ -7,8 +7,8 @@ issues through an explicit command.
 
 Plugin ID: `dev.vspex.jira-mark`
 
-The version is defined in the root `build.gradle` and currently defaults to
-`0.1.0`. Both publishing helpers use that version. For local development, use a composite build, Maven
+The version is defined in the root `build.gradle` as `version = '0.1.1'`.
+Both publishing helpers use that version. For local development, use a composite build, Maven
 Local, or the CLI distribution. Portal installation requires a published and
 approved release.
 
@@ -77,13 +77,9 @@ To publish the release:
 .\publish-plugin-portal.bat
 ```
 
-To override the version for a single invocation without editing `build.gradle`,
-pass the optional `releaseVersion` Gradle property. Both helpers support it:
-
-```powershell
-.\publish-plugin-portal.bat "-PreleaseVersion=0.1.1" --validate-only
-.\publish-plugin-portal.bat "-PreleaseVersion=0.1.1"
-```
+For the next release, edit `version` in the root `build.gradle`, then run the
+same validation and publishing commands. The version is configured only in
+`build.gradle`; command-line version overrides are not supported.
 
 Published versions are fixed; choose a new version for each release. Without
 `mise`, invoke Gradle directly:
@@ -99,8 +95,7 @@ Published versions are fixed; choose a new version for each release. Without
 | Error | Resolution |
 | --- | --- |
 | `Website URL not set` | Set `website` in `gradlePlugin` in `gradle-plugin/build.gradle`. This repository now supplies the GitHub website and `vcsUrl`. |
-| `-SNAPSHOT plugin versions not supported` | Set a fixed release version in the root `build.gradle`, or override it with `"-PreleaseVersion=0.1.0"`. |
-| `Task '.1.0' not found` in PowerShell | Quote the entire property argument: `"-PreleaseVersion=0.1.0"`. |
+| `-SNAPSHOT plugin versions not supported` | Set a fixed release version in the root `build.gradle`. |
 | `mise` is not recognized | Use the direct Gradle commands above with JDK 21 available. |
 
 See the [Gradle Plugin Portal publishing guide](https://plugins.gradle.org/docs/publish-plugin)
@@ -152,9 +147,9 @@ Publish a development build into your local Maven repository from this repositor
 
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.1.0`) and do not upload to the Plugin
-Portal. The helper also accepts an override, for example
-`.\publish-plugin-local.bat "-PreleaseVersion=0.1.1-SNAPSHOT"` for local testing.
+from the root `build.gradle` (currently `0.1.1`) and do not upload to the Plugin
+Portal. To test a snapshot locally, set a version such as `0.1.2-SNAPSHOT` in
+`build.gradle` before publishing to Maven Local.
 
 In the consumer's `settings.gradle`, configure plugin resolution:
 
@@ -173,18 +168,18 @@ version you published locally:
 
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.1.0'
+    id 'dev.vspex.jira-mark' version '0.1.1'
 }
 ```
 
 ### Gradle Plugin Portal
 
-Once release `0.1.0` is published and approved, consumers can apply it without
+Once release `0.1.1` is published and approved, consumers can apply it without
 a local checkout or Maven Local:
 
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.1.0'
+    id 'dev.vspex.jira-mark' version '0.1.1'
 }
 ```
 
