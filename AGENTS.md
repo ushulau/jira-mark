@@ -4,6 +4,7 @@
 
 - `./gradlew build` — compile, check formatting, run unit and plugin functional tests
 - `./gradlew spotlessApply` — format Java sources
+- `./gradlew updateReadmeVersion` — sync marked README version references; also runs during `build`
 - `./gradlew -p dev-rig jiraProfiles` — list example profiles
 - `./gradlew -p dev-rig jiraPreview --ticket-profile=backend-bug --field="summary=Fix login timeout"` — resolve an offline draft
 

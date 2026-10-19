@@ -7,7 +7,10 @@ issues through an explicit command.
 
 Plugin ID: `dev.vspex.jira-mark`
 
-The version is defined in the root `build.gradle` as `version = '0.3.0'`.
+<!-- jira-mark-version:start -->
+The version is defined in the root `build.gradle` as `version = '0.3.1'`.
+<!-- jira-mark-version:end -->
+
 Both publishing helpers use that version. For local development, use a composite build, Maven
 Local, or the CLI distribution. Portal installation requires a published and
 approved release.
@@ -48,6 +51,14 @@ The supplied profiles are `backend-bug` and `backend-feature`. Preview writes
 `build` checks formatting, runs unit and Gradle TestKit tests, validates the
 plugin, and verifies the packaged plugin and installed CLI. Tests use synthetic
 local HTTP servers. Run `.\gradlew.bat spotlessApply` to format Java sources.
+
+`build` also runs `updateReadmeVersion`, which synchronizes marked version
+references in this README from the plugin version in the root `build.gradle`.
+Run `.\gradlew.bat updateReadmeVersion` to update documentation without running
+the full build. Keep the `jira-mark-version` HTML comment markers around the
+managed blocks; only version values inside those blocks are updated. The task
+writes the file only when a value changes. Commit README updates alongside a
+version change so GitHub displays the matching examples.
 
 ## Publish to the Gradle Plugin Portal
 
@@ -152,10 +163,14 @@ Publish a development build into your local Maven repository from this repositor
 .\publish-plugin-local.bat
 ```
 
+<!-- jira-mark-version:start -->
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.3.0`) and do not upload to the Plugin
-Portal. To test a snapshot locally, set a version such as `0.3.1-SNAPSHOT` in
+from the root `build.gradle` (currently `0.3.1`) and do not upload to the Plugin
+Portal.
+<!-- jira-mark-version:end -->
+
+To test a snapshot locally, set a version with the `-SNAPSHOT` suffix in
 `build.gradle` before publishing to Maven Local.
 
 In the consumer's `settings.gradle`, configure plugin resolution:
@@ -173,22 +188,26 @@ pluginManagement {
 Then apply the local version in the consumer's `build.gradle`, matching the
 version you published locally:
 
+<!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.3.0'
+    id 'dev.vspex.jira-mark' version '0.3.1'
 }
 ```
+<!-- jira-mark-version:end -->
 
 ### Gradle Plugin Portal
 
-Once release `0.3.0` is published and approved, consumers can apply it without
+Once the release shown below is published and approved, consumers can apply it without
 a local checkout or Maven Local:
 
+<!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.3.0'
+    id 'dev.vspex.jira-mark' version '0.3.1'
 }
 ```
+<!-- jira-mark-version:end -->
 
 The Plugin Portal is Gradle's default plugin repository. If the consumer
 customizes `pluginManagement.repositories`, include `gradlePluginPortal()`.

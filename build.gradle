@@ -4,6 +4,45 @@ plugins {
     id 'com.gradle.plugin-publish' version '2.2.1' apply false
 }
 
+@org.gradle.work.DisableCachingByDefault(because = 'Updates a tracked document in place')
+abstract class UpdateReadmeVersion extends DefaultTask {
+    @Input
+    abstract Property<String> getPluginVersion()
+
+    @Internal
+    abstract RegularFileProperty getReadmeFile()
+
+    UpdateReadmeVersion() {
+        doNotTrackState('Synchronizes version references in a tracked document')
+    }
+
+    @TaskAction
+    void updateVersion() {
+        def readme = readmeFile.get().asFile
+        def original = readme.getText('UTF-8')
+        def releaseVersion = pluginVersion.get()
+        def startMarker = '<!-- jira-mark-version:start -->'
+        def endMarker = '<!-- jira-mark-version:end -->'
+        def versionPattern = /(?<=version = ')[^']+(?=')|(?<=version ')[^']+(?=')|(?<=currently `)[^`]+(?=`)/
+        int blocks = 0
+        def updated = original.replaceAll(/(?s)(<!-- jira-mark-version:start -->)(.*?)(<!-- jira-mark-version:end -->)/) {
+            match, start, body, end ->
+                if (!(body =~ versionPattern).find()) {
+                    throw new GradleException('No version reference found in a marked README block')
+                }
+                blocks++
+                start + body.replaceAll(versionPattern, java.util.regex.Matcher.quoteReplacement(releaseVersion)) + end
+        }
+        if (blocks == 0 || original.count(startMarker) != blocks || original.count(endMarker) != blocks) {
+            throw new GradleException('README version markers are missing or unbalanced')
+        }
+        if (updated != original) {
+            readme.setText(updated, 'UTF-8')
+            logger.lifecycle('Updated README plugin version to {}', releaseVersion)
+        }
+    }
+}
+
 ext {
     junitBomVersion = '5.11.4'
     snakeYamlVersion = '2.6'
@@ -14,7 +53,7 @@ subprojects {
     apply plugin: 'com.diffplug.spotless'
 
     group = 'dev.vspex'
-    version = '0.3.0'
+    version = '0.3.1'
 
     java {
         toolchain { languageVersion = JavaLanguageVersion.of(21) }
@@ -44,5 +83,15 @@ tasks.register('spotlessApply') {
     dependsOn(subprojects.collect { it.tasks.named('spotlessApply') })
 }
 tasks.named('check') { dependsOn(subprojects.collect { it.tasks.named('check') }) }
-tasks.named('build') { dependsOn(subprojects.collect { it.tasks.named('build') }) }
+def updateReadmeVersion = tasks.register('updateReadmeVersion', UpdateReadmeVersion) {
+    group = 'documentation'
+    description = 'Updates marked README version references from the plugin project version.'
+    pluginVersion = project(':gradle-plugin').version.toString()
+    readmeFile = layout.projectDirectory.file('README.md')
+}
+
+tasks.named('build') {
+    dependsOn(updateReadmeVersion)
+    dependsOn(subprojects.collect { it.tasks.named('build') })
+}
 tasks.named('clean') { dependsOn(subprojects.collect { it.tasks.named('clean') }) }
