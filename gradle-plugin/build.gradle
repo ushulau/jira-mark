@@ -5,6 +5,9 @@ plugins {
 }
 
 gradlePlugin {
+    website = 'https://github.com/ushulau/jira-mark'
+    vcsUrl = 'https://github.com/ushulau/jira-mark.git'
+
     plugins {
         jiraMark {
             id = 'dev.vspex.jira-mark'

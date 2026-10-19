@@ -28,17 +28,28 @@ import org.gradle.work.DisableCachingByDefault;
 /** Writes an effective ticket draft. This is not yet a Jira REST payload. */
 @DisableCachingByDefault(because = "Ticket drafts may contain private issue details")
 public abstract class JiraPreviewTask extends DefaultTask {
+  /** Creates an offline preview task with properties managed by Gradle. */
+  public JiraPreviewTask() {}
+
+  /** {@return the directory containing active Markdown profiles} */
   @InputDirectory
   @PathSensitive(PathSensitivity.RELATIVE)
   public abstract DirectoryProperty getProfilesDir();
 
+  /** {@return the exact profile name to resolve} */
   @Input
   @Option(option = "ticket-profile", description = "Exact profile name, for example backend-bug")
   public abstract Property<String> getProfile();
 
+  /** {@return ordered field overrides in {@code alias=value} form} */
   @Input
   public abstract ListProperty<String> getFields();
 
+  /**
+   * Sets command-line field overrides.
+   *
+   * @param fields ordered overrides; the last value for an alias wins
+   */
   @Option(
       option = "field",
       description = "alias=value; repeat for multiple fields (arrays/objects use JSON)")
@@ -46,6 +57,7 @@ public abstract class JiraPreviewTask extends DefaultTask {
     getFields().set(fields);
   }
 
+  /** {@return the optional YAML or JSON file of values keyed by field alias} */
   @Optional
   @InputFile
   @PathSensitive(PathSensitivity.RELATIVE)
@@ -54,9 +66,15 @@ public abstract class JiraPreviewTask extends DefaultTask {
       description = "YAML or JSON file containing field alias-to-value mappings")
   public abstract RegularFileProperty getInputFile();
 
+  /** {@return the destination for the resolved JSON draft} */
   @OutputFile
   public abstract RegularFileProperty getOutputFile();
 
+  /**
+   * Resolves the selected profile and writes an offline draft.
+   *
+   * @throws IOException if profile or input files cannot be read or the draft cannot be written
+   */
   @TaskAction
   public void preview() throws IOException {
     var profile =

@@ -5,10 +5,12 @@ Each profile combines YAML configuration with Markdown guidance. Prepare tickets
 offline, validate them against Jira Cloud, import reusable profiles, and create
 issues through an explicit command.
 
-Plugin ID: `dev.vspex.jira-mark` · Version: `0.1.0-SNAPSHOT`
+Plugin ID: `dev.vspex.jira-mark`
 
-The plugin is not published to the Gradle Plugin Portal. Use a local composite
-build or the CLI distribution.
+The version is defined in the root `build.gradle` and currently defaults to
+`0.1.0`. Both publishing helpers use that version. For local development, use a composite build, Maven
+Local, or the CLI distribution. Portal installation requires a published and
+approved release.
 
 ## Commands at a glance
 
@@ -46,7 +48,70 @@ The supplied profiles are `backend-bug` and `backend-feature`. Preview writes
 plugin, and verifies the packaged plugin and installed CLI. Tests use synthetic
 local HTTP servers. Run `.\gradlew.bat spotlessApply` to format Java sources.
 
+## Publish to the Gradle Plugin Portal
+
+Both publishing helpers let Gradle resolve the version from the root
+`build.gradle`; neither script contains its own version. Update the default
+version there for each release. The Portal requires a fixed version without
+the `-SNAPSHOT` suffix. The helpers require `mise` on your PATH and forward
+additional Gradle arguments.
+
+Configure Portal credentials outside the repository using `GRADLE_PUBLISH_KEY`
+and `GRADLE_PUBLISH_SECRET`, or `gradle.publish.key` and `gradle.publish.secret`
+in your user-level `~/.gradle/gradle.properties` (normally
+`%USERPROFILE%\.gradle\gradle.properties` on Windows). These are Plugin Portal
+credentials, separate from the Jira credentials used by remote commands.
+
+Build and test the release, then validate publishing metadata without uploading:
+
+```powershell
+.\gradlew.bat build
+.\publish-plugin-portal.bat --validate-only
+```
+
+`--validate-only` does not publish a release or imply Portal approval.
+
+To publish the release:
+
+```powershell
+.\publish-plugin-portal.bat
+```
+
+To override the version for a single invocation without editing `build.gradle`,
+pass the optional `releaseVersion` Gradle property. Both helpers support it:
+
+```powershell
+.\publish-plugin-portal.bat "-PreleaseVersion=0.1.1" --validate-only
+.\publish-plugin-portal.bat "-PreleaseVersion=0.1.1"
+```
+
+Published versions are fixed; choose a new version for each release. Without
+`mise`, invoke Gradle directly:
+
+```powershell
+.\gradlew.bat :gradle-plugin:publishPlugins --validate-only
+# Upload only after validation succeeds:
+.\gradlew.bat :gradle-plugin:publishPlugins
+```
+
+### Publishing troubleshooting
+
+| Error | Resolution |
+| --- | --- |
+| `Website URL not set` | Set `website` in `gradlePlugin` in `gradle-plugin/build.gradle`. This repository now supplies the GitHub website and `vcsUrl`. |
+| `-SNAPSHOT plugin versions not supported` | Set a fixed release version in the root `build.gradle`, or override it with `"-PreleaseVersion=0.1.0"`. |
+| `Task '.1.0' not found` in PowerShell | Quote the entire property argument: `"-PreleaseVersion=0.1.0"`. |
+| `mise` is not recognized | Use the direct Gradle commands above with JDK 21 available. |
+
+See the [Gradle Plugin Portal publishing guide](https://plugins.gradle.org/docs/publish-plugin)
+for account setup and approval requirements.
+
 ## Use the plugin in another project
+
+Choose one of the following installation methods. The consumer's profile files
+belong in `jira/profiles` unless configured otherwise.
+
+### Composite build
 
 Add a composite build to the consumer's `settings.gradle`, adjusting the path:
 
@@ -76,6 +141,56 @@ jira {
 Its JAR bundles the core and Cloud adapter classes; SnakeYAML is a runtime
 dependency. In a consumer project, run the Gradle task examples without
 `-p dev-rig`.
+
+### Maven Local
+
+Publish a development build into your local Maven repository from this repository:
+
+```powershell
+.\publish-plugin-local.bat
+```
+
+This helper requires `mise`. Without it, run
+`.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
+from the root `build.gradle` (currently `0.1.0`) and do not upload to the Plugin
+Portal. The helper also accepts an override, for example
+`.\publish-plugin-local.bat "-PreleaseVersion=0.1.1-SNAPSHOT"` for local testing.
+
+In the consumer's `settings.gradle`, configure plugin resolution:
+
+```groovy
+pluginManagement {
+    repositories {
+        mavenLocal()
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+```
+
+Then apply the local version in the consumer's `build.gradle`, matching the
+version you published locally:
+
+```groovy
+plugins {
+    id 'dev.vspex.jira-mark' version '0.1.0'
+}
+```
+
+### Gradle Plugin Portal
+
+Once release `0.1.0` is published and approved, consumers can apply it without
+a local checkout or Maven Local:
+
+```groovy
+plugins {
+    id 'dev.vspex.jira-mark' version '0.1.0'
+}
+```
+
+The Plugin Portal is Gradle's default plugin repository. If the consumer
+customizes `pluginManagement.repositories`, include `gradlePluginPortal()`.
+Use the same `jira` extension and task examples shown above.
 
 ## Define a profile
 
@@ -402,4 +517,6 @@ cli/            Command-line adapter and application distribution
 gradle-plugin/  Gradle extension, tasks, packaging, and TestKit tests
 dev-rig/        Local consumer and synthetic examples
 README.md       Setup, profile specification, command examples, and error reference
+publish-plugin-local.bat   Publish the configured version to Maven Local using mise
+publish-plugin-portal.bat  Validate or publish a fixed Portal release using mise
 ```

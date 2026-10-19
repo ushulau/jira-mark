@@ -6,6 +6,9 @@ import org.gradle.api.Project;
 
 /** Independent Jira plugin; does not apply Java or attach remote operations to the build. */
 public final class JiraMarkPlugin implements Plugin<Project> {
+  /** Creates the plugin for application by Gradle. */
+  public JiraMarkPlugin() {}
+
   @Override
   public void apply(Project project) {
     JiraExtension extension = project.getExtensions().create("jira", JiraExtension.class);

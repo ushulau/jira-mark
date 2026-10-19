@@ -31,6 +31,7 @@ import org.gradle.work.DisableCachingByDefault;
 /** Explicit remote operations; credentials are resolved at execution and never task properties. */
 @DisableCachingByDefault(because = "Remote operations must run only on explicit invocation")
 public abstract class JiraRemoteTask extends DefaultTask {
+  /** Creates a task that always executes and does not retain remote execution history. */
   public JiraRemoteTask() {
     doNotTrackState(
         "Remote state and credentials must not be captured in Gradle execution history");
@@ -38,49 +39,73 @@ public abstract class JiraRemoteTask extends DefaultTask {
     getReuseDefaults().convention(List.of());
   }
 
+  /**
+   * {@return the plugin-selected operation: {@code import}, {@code validate}, or {@code create}}
+   */
   @Input
   public abstract Property<String> getOperation();
 
+  /** {@return the active profile directory, also used to protect imports from activation} */
   @Internal
   public abstract DirectoryProperty getProfilesDir();
 
+  /** {@return the explicit connection name used to resolve environment credentials at execution} */
   @Input
   @Option(option = "connection", description = "Explicit JIRA_<NAME> environment connection")
   public abstract Property<String> getConnection();
 
+  /** {@return the exact active profile name, or the new draft profile name when importing} */
   @Input
   @Option(option = "ticket-profile", description = "Exact profile name")
   public abstract Property<String> getProfile();
 
+  /** {@return ordered field overrides for validation or creation} */
   @Input
   public abstract ListProperty<String> getFields();
 
+  /**
+   * Sets command-line field overrides.
+   *
+   * @param fields ordered {@code alias=value} overrides; the last value for an alias wins
+   */
   @Option(option = "field", description = "alias=value; repeatable")
   public void setFieldArguments(List<String> fields) {
     getFields().set(fields);
   }
 
+  /** {@return the optional YAML or JSON input for validation or creation} */
   @Internal
   @Option(option = "input", description = "YAML/JSON alias values")
   public abstract RegularFileProperty getInputFile();
 
+  /** {@return the source issue key for import} */
   @Optional
   @Input
   @Option(option = "issue", description = "Import source issue key")
   public abstract Property<String> getIssue();
 
+  /**
+   * {@return the import destination outside active profiles; existing files are never overwritten}
+   */
   @Internal
   @Option(option = "output", description = "Import draft file outside active profiles")
   public abstract RegularFileProperty getOutputFile();
 
+  /** {@return the supported Jira field IDs whose values should become imported defaults} */
   @Input
   public abstract ListProperty<String> getReuseDefaults();
 
+  /**
+   * Selects source issue fields to reuse as defaults during import.
+   *
+   * @param fields supported Jira field IDs to copy
+   */
   @Option(option = "reuse-default", description = "Import only: supported Jira field IDs to reuse")
   public void setReuseDefaultArguments(List<String> fields) {
     getReuseDefaults().set(fields);
   }
 
+  /** Executes the explicitly selected remote operation using execution-time credentials. */
   @TaskAction
   public void executeRemote() {
     try {
