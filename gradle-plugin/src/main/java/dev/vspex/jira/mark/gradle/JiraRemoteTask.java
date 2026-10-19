@@ -15,12 +15,14 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import javax.inject.Inject;
 import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
+import org.gradle.api.provider.ProviderFactory;
 import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.Internal;
 import org.gradle.api.tasks.Optional;
@@ -49,10 +51,16 @@ public abstract class JiraRemoteTask extends DefaultTask {
   @Internal
   public abstract DirectoryProperty getProfilesDir();
 
-  /** {@return the explicit connection name used to resolve environment credentials at execution} */
+  /** {@return the explicit connection name used to resolve credentials at execution} */
   @Input
-  @Option(option = "connection", description = "Explicit JIRA_<NAME> environment connection")
+  @Option(
+      option = "connection",
+      description = "Named Jira connection from Gradle properties or environment")
   public abstract Property<String> getConnection();
+
+  /** {@return the factory for resolving Gradle properties during task execution} */
+  @Inject
+  protected abstract ProviderFactory getProviders();
 
   /** {@return the exact active profile name, or the new draft profile name when importing} */
   @Input
@@ -123,7 +131,12 @@ public abstract class JiraRemoteTask extends DefaultTask {
               || !getReuseDefaults().get().isEmpty())) {
         throw new ProfileException("Issue, output, and reuse-default options require import");
       }
-      var gateway = new CloudJiraGateway(CloudConnection.fromEnvironment(getConnection().get()));
+      var gateway =
+          new CloudJiraGateway(
+              CloudConnection.fromConfiguration(
+                  getConnection().get(),
+                  key -> getProviders().gradleProperty(key).getOrNull(),
+                  System::getenv));
       Path profiles = getProfilesDir().get().getAsFile().toPath();
       if (importing) {
         if (!getIssue().isPresent() || !getOutputFile().isPresent()) {

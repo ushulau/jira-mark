@@ -45,24 +45,42 @@ public final class CloudConnection {
   }
 
   public static CloudConnection fromEnvironment(String name, Function<String, String> environment) {
+    return fromConfiguration(name, key -> null, environment);
+  }
+
+  /**
+   * Resolves each setting from named properties first, falling back to the environment if absent.
+   */
+  public static CloudConnection fromConfiguration(
+      String name, Function<String, String> properties, Function<String, String> environment) {
     if (name == null || !name.matches("[A-Za-z][A-Za-z0-9_]*")) {
       throw new ProfileException(
           "An explicit connection name is required (letters, digits, underscores)");
     }
     String prefix = "JIRA_" + name.toUpperCase(java.util.Locale.ROOT) + "_";
-    String url = environment.apply(prefix + "URL");
+    String propertyPrefix = "jira." + name.toLowerCase(java.util.Locale.ROOT) + ".";
+    String url = setting(properties, propertyPrefix + "url", environment, prefix + "URL");
     if (url == null || url.isBlank()) {
       throw new ProfileException("Selected connection URL is not configured");
     }
     try {
       return new CloudConnection(
           URI.create(url),
-          environment.apply(prefix + "EMAIL"),
-          environment.apply(prefix + "API_TOKEN"));
+          setting(properties, propertyPrefix + "email", environment, prefix + "EMAIL"),
+          setting(properties, propertyPrefix + "token", environment, prefix + "API_TOKEN"));
     } catch (IllegalArgumentException failure) {
       throw new ProfileException(
           "Selected connection requires a valid URL, account email, and API token");
     }
+  }
+
+  private static String setting(
+      Function<String, String> properties,
+      String property,
+      Function<String, String> environment,
+      String variable) {
+    String value = properties.apply(property);
+    return value != null ? value : environment.apply(variable);
   }
 
   public URI baseUrl() {

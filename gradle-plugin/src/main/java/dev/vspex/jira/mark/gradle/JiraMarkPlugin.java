@@ -82,6 +82,7 @@ public final class JiraMarkPlugin implements Plugin<Project> {
               task.getOperation().set(operation);
               task.getOperation().disallowChanges();
               task.getProfilesDir().convention(extension.getProfilesDir());
+              task.getConnection().convention(extension.getConnection());
             });
   }
 }

@@ -220,4 +220,131 @@ class JiraRemoteFunctionalTest {
             .encodeToString(
                 ("tester@example.invalid:" + credential).getBytes(StandardCharsets.UTF_8));
   }
+
+  @Test
+  void userGradlePropertiesWorkWithoutEnvironmentAndRefreshAfterTokenRotation() throws Exception {
+    Path userHome = isolatedUserHome();
+    Path properties = userHome.resolve("gradle.properties");
+    writeConnection(properties, CREDENTIAL);
+    String[] args = {
+      "jiraValidateRemote",
+      "--connection=test",
+      "--ticket-profile=bug",
+      "--field=summary=Synthetic",
+      "--configuration-cache",
+      "--gradle-user-home",
+      userHome.toString()
+    };
+    var environment = new HashMap<>(System.getenv());
+    environment.remove("JIRA_TEST_URL");
+    environment.remove("JIRA_TEST_EMAIL");
+    environment.remove("JIRA_TEST_API_TOKEN");
+    var testRunner = runner(CREDENTIAL, args).withEnvironment(environment);
+    var first = testRunner.build();
+    assertTrue(first.getOutput().contains("\"valid\":true"));
+    assertEquals(basic(CREDENTIAL), authorizations.get(authorizations.size() - 1));
+    assertFalse(first.getOutput().contains(CREDENTIAL));
+
+    String rotated = "synthetic-properties-rotated-token";
+    writeConnection(properties, rotated);
+    var second = testRunner.build();
+    assertEquals(basic(rotated), authorizations.get(authorizations.size() - 1));
+    assertFalse(second.getOutput().contains(rotated));
+    var third = testRunner.build();
+    assertTrue(third.getOutput().contains("Reusing configuration cache."));
+    assertEquals(basic(rotated), authorizations.get(authorizations.size() - 1));
+    assertEquals(0, posts.get());
+    try (var files = Files.walk(project.resolve(".gradle/configuration-cache"))) {
+      for (Path file : files.filter(Files::isRegularFile).toList()) {
+        String content = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
+        assertFalse(content.contains(CREDENTIAL));
+        assertFalse(content.contains(rotated));
+        assertFalse(content.contains(basic(rotated)));
+      }
+    }
+  }
+
+  @Test
+  void userPropertiesOverrideEnvironmentAndCommandLineOverridesUserProperties() throws Exception {
+    Path userHome = isolatedUserHome();
+    writeConnection(userHome.resolve("gradle.properties"), "synthetic-user-properties-token");
+    String[] args = {
+      "jiraValidateRemote",
+      "--connection=test",
+      "--ticket-profile=bug",
+      "--field=summary=Synthetic",
+      "--configuration-cache",
+      "--gradle-user-home",
+      userHome.toString()
+    };
+    runner(CREDENTIAL, args).build();
+    assertEquals(
+        basic("synthetic-user-properties-token"), authorizations.get(authorizations.size() - 1));
+    var overridden = new ArrayList<>(List.of(args));
+    overridden.add("-Pjira.test.token=synthetic-command-line-token");
+    runner(CREDENTIAL, overridden.toArray(String[]::new)).build();
+    assertEquals(
+        basic("synthetic-command-line-token"), authorizations.get(authorizations.size() - 1));
+    overridden.set(overridden.size() - 1, "-Pjira.test.token=");
+    int beforeFailure = requests.get();
+    var failed = runner(CREDENTIAL, overridden.toArray(String[]::new)).buildAndFail();
+    assertTrue(failed.getOutput().contains("INVALID_INPUT"));
+    assertFalse(failed.getOutput().contains(CREDENTIAL));
+    assertEquals(beforeFailure, requests.get());
+  }
+
+  private void writeConnection(Path file, String token) throws Exception {
+    Files.writeString(
+        file,
+        "jira.test.url="
+            + baseUrl
+            + "\njira.test.email=tester@example.invalid\njira.test.token="
+            + token
+            + "\n");
+  }
+
+  private static Path isolatedUserHome() throws Exception {
+    // Gradle daemons retain cache locks on Windows. Keep their user homes outside JUnit fixtures,
+    // just like TestKit's own persistent user home.
+    return Files.createTempDirectory("jira-mark-test-user-home-");
+  }
+
+  @Test
+  void repositoryDefaultsAndCommandLineOverridesWorkWithConfigurationCache() throws Exception {
+    Files.writeString(
+        project.resolve("build.gradle"),
+        """
+        plugins { id 'dev.vspex.jira-mark' }
+        jira { connection = 'test' }
+        tasks.named('jiraValidateRemote') {
+          profile = 'bug'
+          inputFile = layout.projectDirectory.file('ticket.json')
+          fields = ['summary=Repository default']
+        }
+        tasks.named('jiraImportProfile') {
+          profile = 'imported'
+          issue = 'APP-1'
+          outputFile = layout.projectDirectory.file('jira/profile-drafts/imported.md')
+          reuseDefaults = []
+        }
+        """);
+    // An empty file value is satisfied by the configured field override. CLI replacement with an
+    // empty summary must fail instead of falling back to either configured or input values.
+    Files.writeString(project.resolve("ticket.json"), "{\"summary\":\"\"}");
+    var first = runner(CREDENTIAL, "jiraValidateRemote", "--configuration-cache").build();
+    assertTrue(first.getOutput().contains("\"valid\":true"));
+    var second = runner(CREDENTIAL, "jiraValidateRemote", "--configuration-cache").build();
+    assertTrue(second.getOutput().contains("Reusing configuration cache."));
+    var failed =
+        runner(CREDENTIAL, "jiraValidateRemote", "--field=summary=", "--configuration-cache")
+            .buildAndFail();
+    assertTrue(failed.getOutput().contains("INVALID_INPUT"));
+    var overridden =
+        runner(CREDENTIAL, "jiraValidateRemote", "--connection=missing", "--configuration-cache")
+            .buildAndFail();
+    assertTrue(overridden.getOutput().contains("Selected connection URL is not configured"));
+    runner(CREDENTIAL, "jiraImportProfile", "--configuration-cache").build();
+    assertTrue(Files.exists(project.resolve("jira/profile-drafts/imported.md")));
+    assertEquals(0, posts.get());
+  }
 }

@@ -7,7 +7,7 @@ issues through an explicit command.
 
 Plugin ID: `dev.vspex.jira-mark`
 
-The version is defined in the root `build.gradle` as `version = '0.1.2'`.
+The version is defined in the root `build.gradle` as `version = '0.3.0'`.
 Both publishing helpers use that version. For local development, use a composite build, Maven
 Local, or the CLI distribution. Portal installation requires a published and
 approved release.
@@ -23,7 +23,8 @@ approved release.
 | Import a draft profile from an issue | `jiraImportProfile` | `import` | Read issue and metadata |
 | Create an issue | `jiraCreate` | `create` | Read metadata, then submit |
 
-Remote commands require an explicit connection. The plugin does not attach its
+Remote commands require a named connection, supplied as an option or a Gradle
+repository default. The plugin does not attach its
 tasks to `build` or `check`. CLI prompting is available through `--interactive`.
 
 ## Build and try it locally
@@ -55,6 +56,11 @@ Both publishing helpers let Gradle resolve the version from the root
 version there for each release. The Portal requires a fixed version without
 the `-SNAPSHOT` suffix. The helpers require `mise` on your PATH and forward
 additional Gradle arguments.
+
+The plugin ID is `dev.vspex.jira-mark`. Its implementation artifact is published
+as `dev.vspex:jira-mark-gradle-plugin:<version>`. The Gradle plugin marker points
+to that artifact. The artifact name is configured in `gradle-plugin/build.gradle`
+to keep it distinct from other plugins that also use a `gradle-plugin` subproject.
 
 Configure Portal credentials outside the repository using `GRADLE_PUBLISH_KEY`
 and `GRADLE_PUBLISH_SECRET`, or `gradle.publish.key` and `gradle.publish.secret`
@@ -96,7 +102,7 @@ Published versions are fixed; choose a new version for each release. Without
 | --- | --- |
 | `Website URL not set` | Set `website` in `gradlePlugin` in `gradle-plugin/build.gradle`. This repository now supplies the GitHub website and `vcsUrl`. |
 | `-SNAPSHOT plugin versions not supported` | Set a fixed release version in the root `build.gradle`. |
-| Artifact already exists with a different hash | The Portal already has different content for that version. Choose a new version in the root `build.gradle`; clearing the configuration cache will not replace the stored artifact. |
+| Artifact already exists with a different hash | Check the full `group:artifact:version` in the error. Different plugins must use distinct implementation coordinates; Jira Mark uses `dev.vspex:jira-mark-gradle-plugin:<version>`. If those coordinates already contain this release, choose a new version. Clearing the configuration cache will not replace stored artifacts. |
 | `mise` is not recognized | Use the direct Gradle commands above with JDK 21 available. |
 
 See the [Gradle Plugin Portal publishing guide](https://plugins.gradle.org/docs/publish-plugin)
@@ -148,8 +154,8 @@ Publish a development build into your local Maven repository from this repositor
 
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.1.2`) and do not upload to the Plugin
-Portal. To test a snapshot locally, set a version such as `0.1.3-SNAPSHOT` in
+from the root `build.gradle` (currently `0.3.0`) and do not upload to the Plugin
+Portal. To test a snapshot locally, set a version such as `0.3.1-SNAPSHOT` in
 `build.gradle` before publishing to Maven Local.
 
 In the consumer's `settings.gradle`, configure plugin resolution:
@@ -169,24 +175,87 @@ version you published locally:
 
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.1.2'
+    id 'dev.vspex.jira-mark' version '0.3.0'
 }
 ```
 
 ### Gradle Plugin Portal
 
-Once release `0.1.2` is published and approved, consumers can apply it without
+Once release `0.3.0` is published and approved, consumers can apply it without
 a local checkout or Maven Local:
 
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.1.2'
+    id 'dev.vspex.jira-mark' version '0.3.0'
 }
 ```
 
 The Plugin Portal is Gradle's default plugin repository. If the consumer
 customizes `pluginManagement.repositories`, include `gradlePluginPortal()`.
 Use the same `jira` extension and task examples shown above.
+
+### Repository defaults in build.gradle
+
+Configure the connection name once in the consumer's `build.gradle`. Keep its
+URL, account email, and token in user Gradle properties or environment variables:
+
+```groovy
+jira {
+    connection = 'work'
+    profilesDir = layout.projectDirectory.dir('jira/profiles')
+}
+
+tasks.named('jiraValidateRemote') {
+    profile = 'backend-bug'
+    inputFile = layout.projectDirectory.file('ticket.json')
+}
+
+tasks.named('jiraPreview') {
+    profile = 'backend-bug'
+    inputFile = layout.projectDirectory.file('ticket.json')
+    fields = ['labels=["backend"]']
+    outputFile = layout.buildDirectory.file('jira/preview.json')
+}
+```
+
+Then run the configured tasks without repeating those options:
+
+```powershell
+.\gradlew.bat jiraValidateRemote
+.\gradlew.bat jiraPreview
+# Override a configured value for this invocation:
+.\gradlew.bat jiraValidateRemote --connection=personal --field="summary=Investigate login timeout"
+```
+
+Each Gradle task option has a corresponding configurable property:
+
+| Task option | build.gradle task property | Tasks |
+| --- | --- | --- |
+| `--connection` | `connection` | Remote tasks; defaults to `jira.connection` when configured |
+| `--ticket-profile` | `profile` | Preview and remote tasks |
+| `--input` | `inputFile` | Preview, remote validation, creation |
+| `--field` | `fields` (list of `alias=value` strings) | Preview, remote validation, creation |
+| `--issue` | `issue` | Import |
+| `--output` | `outputFile` | Import; preview also exposes `outputFile` through build configuration |
+| `--reuse-default` | `reuseDefaults` (list of Jira field IDs) | Import |
+
+For example, configure an import separately from ticket validation:
+
+```groovy
+tasks.named('jiraImportProfile') {
+    profile = 'imported-bug'
+    issue = 'APP-123'
+    outputFile = layout.projectDirectory.file('jira/profile-drafts/imported-bug.md')
+    reuseDefaults = ['labels']
+}
+```
+
+Task-specific configuration takes precedence over the shared `jira.connection`
+default. Command-line task options override configured values for that invocation.
+For list options, supplied command-line values replace the configured list.
+Without a configured connection or `--connection`, remote tasks fail rather than
+guessing. Offline tasks need no connection. The standalone CLI continues to
+require `--connection NAME` for remote commands.
 
 ## Define a profile
 
@@ -349,19 +418,49 @@ stdout. Gradle tasks do not support interactive prompting.
 
 ### 3. Validate a ticket against Jira Cloud
 
-For a connection named `work`, configure these environment variables outside
-tracked files using your terminal or credential tooling:
+For Gradle, store connection settings in your user-level
+`~/.gradle/gradle.properties`, consistent with wiki-mark's Gradle property setup.
+The directory is `.gradle` (with a leading dot), normally
+`%USERPROFILE%\.gradle\gradle.properties` on Windows. If `GRADLE_USER_HOME` is
+customized, use its `gradle.properties` instead. For a connection named `work`:
 
-| Variable | Value |
-| --- | --- |
-| `JIRA_WORK_URL` | Your HTTPS Jira site base URL |
-| `JIRA_WORK_EMAIL` | Your account email |
-| `JIRA_WORK_API_TOKEN` | An API token compatible with the selected site endpoint |
+```properties
+jira.work.url=https://your-site.atlassian.net
+jira.work.email=your-email@example.com
+jira.work.token=<your Jira API token>
+```
+
+Keep this file outside the repository. These Jira credentials are separate
+from the Gradle Plugin Portal publishing credentials.
+
+Environment variables remain supported by both Gradle and the standalone CLI:
+
+| Gradle property | Environment variable | Value |
+| --- | --- | --- |
+| `jira.work.url` | `JIRA_WORK_URL` | Your HTTPS Jira site base URL |
+| `jira.work.email` | `JIRA_WORK_EMAIL` | Your account email |
+| `jira.work.token` | `JIRA_WORK_API_TOKEN` | An API token compatible with the selected site endpoint |
 
 Connection names start with a letter and contain letters, digits, or underscores.
-The environment prefix is uppercased. There is no implicit default connection.
-Credentials are resolved during execution and are not profile fields or Gradle
-task properties.
+Property connection names are lowercased; the environment prefix is uppercased.
+Select the connection with `--connection=work`, or set
+`jira { connection = 'work' }` in the consumer's `build.gradle` to use it as the
+default for remote tasks.
+Use another prefix, such as `jira.personal.*` or `JIRA_PERSONAL_*`, for another
+connection.
+
+For each setting, Gradle properties take precedence over the corresponding
+environment variable. Gradle's normal property rules apply: a command-line
+`-Pjira.work.token=...` overrides the user properties file. Prefer the file or
+credential tooling for secrets so tokens do not appear in shell history or
+command logs. An explicitly empty property overrides the environment and fails
+validation rather than silently using another credential. Settings absent from
+Gradle properties fall back individually to the environment.
+
+Credentials are resolved during task execution and are not profile fields or
+Gradle task properties. The configured default stores only a connection name,
+not credentials. Task actions do not access `Project`. The standalone
+CLI uses only the environment variables; it does not read Gradle properties.
 
 After adapting the example profile's project, field IDs, and choices to your Jira
 instance, validate its ticket values:
@@ -495,8 +594,10 @@ Application errors omit credentials and raw remote response bodies.
 ## Verification and limitations
 
 The full build covers profile behavior, synthetic HTTP failures, field encoding,
-import protection, CLI prompting, packaged artifacts, and Gradle configuration-cache
-reuse with credential rotation. Remote behavior has not been verified against a
+import protection, CLI prompting, packaged artifacts, repository defaults and
+command-line overrides, Gradle property/environment precedence, and Gradle
+configuration-cache reuse with credential rotation.
+Remote behavior has not been verified against a
 live Jira instance.
 
 Not implemented: OAuth/scoped-token gateway routing, Jira Data Center, user/date
