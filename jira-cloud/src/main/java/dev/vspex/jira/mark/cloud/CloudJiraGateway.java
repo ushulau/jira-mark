@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Jira Cloud v3 adapter using paginated create metadata, never deprecated createmeta expansion. */
+/** Jira Cloud v3 and Data Center v2 adapter using paginated create metadata. */
 public final class CloudJiraGateway implements JiraGateway {
   private final CloudConnection connection;
   private final CloudTransport http;
@@ -30,10 +30,11 @@ public final class CloudJiraGateway implements JiraGateway {
 
   @Override
   public Metadata metadata(String project, String issueType) {
-    var projectData = http.get("/rest/api/3/project/" + segment(project));
+    var projectData = http.get(connection.apiPath() + "/project/" + segment(project));
     String projectId = id(projectData, "id");
-    String path = "/rest/api/3/issue/createmeta/" + projectId + "/issuetypes";
-    var types = pages(path, "issueTypes");
+    String path = connection.apiPath() + "/issue/createmeta/" + projectId + "/issuetypes";
+    boolean dataCenter = connection.deployment() == CloudConnection.Deployment.DATA_CENTER;
+    var types = pages(path, dataCenter ? "values" : "issueTypes");
     var exactIds = types.stream().filter(type -> issueType.equals(type.get("id"))).toList();
     var matches =
         exactIds.isEmpty()
@@ -45,7 +46,7 @@ public final class CloudJiraGateway implements JiraGateway {
     }
     String typeId = id(matches.get(0), "id");
     var fields = new LinkedHashMap<String, Field>();
-    for (var field : pages(path + "/" + typeId, "fields")) {
+    for (var field : pages(path + "/" + typeId, dataCenter ? "values" : "fields")) {
       String fieldId = id(field, "fieldId");
       if (!fieldId.matches("[A-Za-z][A-Za-z0-9_]*")) {
         throw invalid();
@@ -65,7 +66,8 @@ public final class CloudJiraGateway implements JiraGateway {
     // Only reusable candidates are fetched; summary, description, and user fields are excluded.
     var data =
         http.get(
-            "/rest/api/3/issue/"
+            connection.apiPath()
+                + "/issue/"
                 + segment(issueKey)
                 + "?fields=project,issuetype,labels,components,versions,fixVersions,priority");
     var fields = object(data.get("fields"));
@@ -82,7 +84,7 @@ public final class CloudJiraGateway implements JiraGateway {
 
   @Override
   public CreatedIssue create(Map<String, Object> payload) {
-    var data = http.post("/rest/api/3/issue", payload);
+    var data = http.post(connection.apiPath() + "/issue", payload);
     Object key = data.get("key");
     if (!(key instanceof String text) || !text.matches("[A-Za-z][A-Za-z0-9_]*-[0-9]+")) {
       throw CloudTransport.uncertain();
@@ -121,7 +123,7 @@ public final class CloudJiraGateway implements JiraGateway {
     throw new JiraFailure(INVALID_RESPONSE, "Jira metadata exceeds the pagination limit");
   }
 
-  private static Field parseField(String id, Map<String, Object> data) {
+  private Field parseField(String id, Map<String, Object> data) {
     var schema = data.get("schema") instanceof Map<?, ?> map ? map : Map.of();
     String type = String.valueOf(schema.get("type"));
     String custom = String.valueOf(schema.getOrDefault("custom", null));
@@ -138,7 +140,10 @@ public final class CloudJiraGateway implements JiraGateway {
         case "string" -> {
           local = "string";
           encoding =
-              id.equals("description") || id.equals("environment") || custom.endsWith(":textarea")
+              connection.deployment() == CloudConnection.Deployment.CLOUD
+                      && (id.equals("description")
+                          || id.equals("environment")
+                          || custom.endsWith(":textarea"))
                   ? "adf"
                   : "literal";
         }

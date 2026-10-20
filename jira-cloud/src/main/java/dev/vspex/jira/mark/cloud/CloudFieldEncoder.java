@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** Explicit small field subset; text becomes literal ADF, never an implicit template. */
+/** Encodes the supported field subset according to the deployment-specific metadata encoding. */
 public final class CloudFieldEncoder implements JiraFieldEncoder {
   @Override
   public Object encode(JiraGateway.Field field, Object value, String alias) {

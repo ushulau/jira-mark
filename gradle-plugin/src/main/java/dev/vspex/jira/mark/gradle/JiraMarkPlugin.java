@@ -54,7 +54,7 @@ public final class JiraMarkPlugin implements Plugin<Project> {
         extension,
         "jiraValidateRemote",
         "validate",
-        "Validates ticket values against current Jira Cloud metadata.");
+        "Validates ticket values against current Jira metadata.");
     registerRemote(
         project,
         extension,
@@ -66,7 +66,7 @@ public final class JiraMarkPlugin implements Plugin<Project> {
         extension,
         "jiraCreate",
         "create",
-        "Explicitly creates one Jira Cloud issue after validation.");
+        "Explicitly creates one Jira issue after validation.");
   }
 
   private static void registerRemote(

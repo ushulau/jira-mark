@@ -68,4 +68,57 @@ class CloudConnectionTest {
         + Base64.getEncoder()
             .encodeToString((email + ":" + token).getBytes(StandardCharsets.UTF_8));
   }
+
+  @Test
+  void dataCenterUsesBearerWithoutEmailAndDoesNotGuessFromMissingEmail() {
+    var properties =
+        Map.of(
+            "jira.work.url", "https://jira.example.invalid/jira/",
+            "jira.work.type", "data-center",
+            "jira.work.token", "synthetic-pat");
+    var connection = CloudConnection.fromConfiguration("work", properties::get, key -> null);
+    assertEquals("Bearer synthetic-pat", connection.authorization());
+    assertEquals(CloudConnection.Deployment.DATA_CENTER, connection.deployment());
+    assertEquals("/rest/api/2", connection.apiPath());
+    assertEquals(URI.create("https://jira.example.invalid/jira"), connection.baseUrl());
+    assertFalse(connection.toString().contains("synthetic-pat"));
+    assertThrows(
+        ProfileException.class,
+        () ->
+            CloudConnection.fromConfiguration(
+                "work",
+                key -> key.equals("jira.work.type") ? null : properties.get(key),
+                key -> null));
+  }
+
+  @Test
+  void deploymentTypeUsesPropertyPrecedenceAndRejectsInvalidExplicitValues() {
+    var environment = new java.util.HashMap<>(ENVIRONMENT);
+    environment.put("JIRA_WORK_TYPE", "data-center");
+    assertEquals(
+        "Bearer synthetic-environment-token",
+        CloudConnection.fromEnvironment("work", environment::get).authorization());
+    assertEquals(
+        "/rest/api/3",
+        CloudConnection.fromConfiguration(
+                "work", Map.of("jira.work.type", "cloud")::get, environment::get)
+            .apiPath());
+    for (String invalid : new String[] {"", "bearer", "unknown"}) {
+      assertThrows(
+          ProfileException.class,
+          () ->
+              CloudConnection.fromConfiguration(
+                  "work", Map.of("jira.work.type", invalid)::get, environment::get));
+    }
+    for (String token : new String[] {"", "bad\r\nheader", "has space"}) {
+      assertThrows(
+          ProfileException.class,
+          () ->
+              new CloudConnection(
+                  URI.create("https://jira.example.invalid"),
+                  null,
+                  token,
+                  CloudConnection.Deployment.DATA_CENTER));
+    }
+  }
 }

@@ -2,13 +2,13 @@
 
 A Gradle plugin and standalone CLI for repository-owned Jira ticket profiles.
 Each profile combines YAML configuration with Markdown guidance. Prepare tickets
-offline, validate them against Jira Cloud, import reusable profiles, and create
+offline, validate them against Jira Cloud or Data Center, import reusable profiles, and create
 issues through an explicit command.
 
 Plugin ID: `dev.vspex.jira-mark`
 
 <!-- jira-mark-version:start -->
-The version is defined in the root `build.gradle` as `version = '0.4.0'`.
+The version is defined in the root `build.gradle` as `version = '0.5.0'`.
 <!-- jira-mark-version:end -->
 
 Both publishing helpers use that version. For local development, use a composite build, Maven
@@ -151,7 +151,7 @@ jira {
 ```
 
 `jira/profiles` is the default profile directory. The plugin does not apply Java.
-Its JAR bundles the core and Cloud adapter classes; SnakeYAML is a runtime
+Its JAR bundles the core and Jira adapter classes; SnakeYAML is a runtime
 dependency. In a consumer project, run the Gradle task examples without
 `-p dev-rig`.
 
@@ -166,7 +166,7 @@ Publish a development build into your local Maven repository from this repositor
 <!-- jira-mark-version:start -->
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.4.0`) and do not upload to the Plugin
+from the root `build.gradle` (currently `0.5.0`) and do not upload to the Plugin
 Portal.
 <!-- jira-mark-version:end -->
 
@@ -191,7 +191,7 @@ version you published locally:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.4.0'
+    id 'dev.vspex.jira-mark' version '0.5.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -204,7 +204,7 @@ a local checkout or Maven Local:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.4.0'
+    id 'dev.vspex.jira-mark' version '0.5.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -435,7 +435,7 @@ The CLI uses option/value pairs, such as `--profile backend-bug`, and repeatable
 `--field ALIAS=VALUE`. Prompts go to stderr; successful results are JSON on
 stdout. Gradle tasks do not support interactive prompting.
 
-### 3. Validate a ticket against Jira Cloud
+### 3. Configure a connection and validate a ticket
 
 For Gradle, store connection settings in your user-level
 `~/.gradle/gradle.properties`, consistent with wiki-mark's Gradle property setup.
@@ -445,6 +445,7 @@ customized, use its `gradle.properties` instead. For a connection named `work`:
 
 ```properties
 jira.work.url=https://your-site.atlassian.net
+jira.work.type=cloud
 jira.work.email=your-email@example.com
 jira.work.token=<your Jira API token>
 ```
@@ -452,13 +453,42 @@ jira.work.token=<your Jira API token>
 Keep this file outside the repository. These Jira credentials are separate
 from the Gradle Plugin Portal publishing credentials.
 
+For on-premises **Jira Data Center**, select its connection type and use a
+personal access token (PAT). No email is required:
+
+```properties
+jira.work.url=https://jira.example.com
+jira.work.type=data-center
+jira.work.token=<your Jira personal access token>
+```
+
+Include any context path in the URL, for example `https://jira.example.com/jira`.
+The type selects the complete protocol behavior:
+
+| Connection type | Authorization | REST API | Rich-text values |
+| --- | --- | --- | --- |
+| `cloud` (default when omitted) | Basic using email and API token | `/rest/api/3` | ADF paragraphs |
+| `data-center` | Bearer using a PAT; email is ignored | `/rest/api/2` | Original text/wiki markup strings |
+
+The plugin does not detect deployment type from the hostname or a missing email,
+and it does not retry failed authentication with another scheme. An existing
+Cloud connection keeps its current behavior. For a Data Center PAT rejected
+with `AUTHENTICATION`, ensure `jira.work.type=data-center` is configured.
+An omitted email alone does not enable Bearer authentication.
+
+Data Center support uses the paginated create-metadata endpoints available in
+modern Jira releases and targets Jira 8.14+ with PAT support. See Atlassian's
+[PAT authentication documentation](https://confluence.atlassian.com/enterprise/using-personal-access-tokens-1026032365.html)
+and [REST metadata and issue creation examples](https://developer.atlassian.com/server/jira/platform/jira-rest-api-examples/).
+
 Environment variables remain supported by both Gradle and the standalone CLI:
 
 | Gradle property | Environment variable | Value |
 | --- | --- | --- |
-| `jira.work.url` | `JIRA_WORK_URL` | Your HTTPS Jira site base URL |
-| `jira.work.email` | `JIRA_WORK_EMAIL` | Your account email |
-| `jira.work.token` | `JIRA_WORK_API_TOKEN` | An API token compatible with the selected site endpoint |
+| `jira.work.url` | `JIRA_WORK_URL` | Your HTTPS Jira site base URL, including any context path |
+| `jira.work.type` | `JIRA_WORK_TYPE` | `cloud` (default) or `data-center` |
+| `jira.work.email` | `JIRA_WORK_EMAIL` | Cloud account email; not required for Data Center |
+| `jira.work.token` | `JIRA_WORK_API_TOKEN` | Cloud API token or Data Center PAT, according to the selected type |
 
 Connection names start with a letter and contain letters, digits, or underscores.
 Property connection names are lowercased; the environment prefix is uppercased.
@@ -472,7 +502,7 @@ For each setting, Gradle properties take precedence over the corresponding
 environment variable. Gradle's normal property rules apply: a command-line
 `-Pjira.work.token=...` overrides the user properties file. Prefer the file or
 credential tooling for secrets so tokens do not appear in shell history or
-command logs. An explicitly empty property overrides the environment and fails
+command logs. An explicitly empty required property overrides the environment and fails
 validation rather than silently using another credential. Settings absent from
 Gradle properties fall back individually to the environment.
 
@@ -572,7 +602,7 @@ pagination is rejected.
 | Remote field shape | Local profile type | Encoding |
 | --- | --- | --- |
 | String or single-line text | `string` | Literal text |
-| Description, environment, standard textarea custom field | `string` | Literal text to ADF paragraphs |
+| Description, environment, standard textarea custom field | `string` | Cloud: ADF paragraphs; Data Center: original text string |
 | Number, integer, boolean | Matching type | JSON scalar |
 | String array, including labels | `string-list` | JSON string array |
 | Priority, option, component, version | `object` | Reference object |
@@ -589,8 +619,10 @@ supported. Unsupported schemas fail when a value is supplied. Remote required
 fields cannot be made optional by a local profile. Jira defaults can satisfy
 omitted remote requirements, but explicit empty values cannot.
 
-Description conversion creates one ADF paragraph per line and preserves Markdown
-punctuation literally. There is no Markdown rendering or template expansion.
+Cloud description conversion creates one ADF paragraph per line and preserves Markdown
+punctuation literally. Data Center receives the original string, including newlines
+and any wiki markup; Jira's configured renderer decides how to display it.
+The plugin does not render Markdown, convert it to wiki markup, or expand templates.
 Jira workflow validators and installed apps may impose additional constraints
 that metadata validation cannot predict.
 
@@ -631,11 +663,13 @@ Application errors omit credentials and raw remote response bodies.
 The full build covers profile behavior, synthetic HTTP failures, field encoding,
 import protection, CLI prompting, packaged artifacts, repository defaults and
 command-line overrides, Gradle property/environment precedence, and Gradle
-configuration-cache reuse with credential rotation.
+configuration-cache reuse with credential rotation for both Basic and Bearer authentication.
+Synthetic Data Center tests exercise API v2 metadata pagination, profile import,
+text encoding, creation, and non-retry behavior.
 Remote behavior has not been verified against a
 live Jira instance.
 
-Not implemented: OAuth/scoped-token gateway routing, Jira Data Center, user/date
+Not implemented: OAuth/scoped-token gateway routing, legacy expanded createmeta, user/date
 fields, cascading selects, app-specific field encodings, dynamic autocomplete,
 metadata caching, Markdown rendering, automatic templates, automatic creation
 recovery, and Gradle prompting.

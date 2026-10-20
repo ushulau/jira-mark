@@ -8,10 +8,21 @@ import java.util.function.Function;
 
 /** Execution-time connection settings. Never store this object in a Gradle task property. */
 public final class CloudConnection {
+  /** Selects the authentication, REST API version, and rich-text representation. */
+  public enum Deployment {
+    CLOUD,
+    DATA_CENTER
+  }
+
   private final URI baseUrl;
   private final String authorization;
+  private final Deployment deployment;
 
   public CloudConnection(URI baseUrl, String email, String apiToken) {
+    this(baseUrl, email, apiToken, Deployment.CLOUD);
+  }
+
+  public CloudConnection(URI baseUrl, String email, String apiToken, Deployment deployment) {
     if (baseUrl == null
         || baseUrl.getHost() == null
         || baseUrl.getUserInfo() != null
@@ -24,20 +35,31 @@ public final class CloudConnection {
       throw new ProfileException(
           "Connection URL must be HTTPS without credentials, query, or fragment");
     }
-    if (email == null
-        || email.isBlank()
-        || email.contains(":")
-        || email.chars().anyMatch(Character::isISOControl)
-        || apiToken == null
+    if (deployment == null) {
+      throw new ProfileException("Connection type must be cloud or data-center");
+    }
+    if (apiToken == null
         || apiToken.isBlank()
-        || apiToken.chars().anyMatch(Character::isISOControl)) {
+        || apiToken.chars().anyMatch(Character::isISOControl)
+        || deployment == Deployment.DATA_CENTER
+            && apiToken.chars().anyMatch(Character::isWhitespace)) {
+      throw new ProfileException("Connection requires a valid API token or personal access token");
+    }
+    if (deployment == Deployment.CLOUD
+        && (email == null
+            || email.isBlank()
+            || email.contains(":")
+            || email.chars().anyMatch(Character::isISOControl))) {
       throw new ProfileException("Connection requires an account email and API token");
     }
     this.baseUrl = URI.create(baseUrl.toString().replaceAll("/+$", ""));
+    this.deployment = deployment;
     this.authorization =
-        "Basic "
-            + Base64.getEncoder()
-                .encodeToString((email + ":" + apiToken).getBytes(StandardCharsets.UTF_8));
+        deployment == Deployment.DATA_CENTER
+            ? "Bearer " + apiToken
+            : "Basic "
+                + Base64.getEncoder()
+                    .encodeToString((email + ":" + apiToken).getBytes(StandardCharsets.UTF_8));
   }
 
   public static CloudConnection fromEnvironment(String name) {
@@ -63,14 +85,24 @@ public final class CloudConnection {
     if (url == null || url.isBlank()) {
       throw new ProfileException("Selected connection URL is not configured");
     }
+    String type = setting(properties, propertyPrefix + "type", environment, prefix + "TYPE");
+    Deployment deployment;
+    if (type == null || type.equals("cloud")) {
+      deployment = Deployment.CLOUD;
+    } else if (type.equals("data-center")) {
+      deployment = Deployment.DATA_CENTER;
+    } else {
+      throw new ProfileException("Connection type must be cloud or data-center");
+    }
     try {
       return new CloudConnection(
           URI.create(url),
           setting(properties, propertyPrefix + "email", environment, prefix + "EMAIL"),
-          setting(properties, propertyPrefix + "token", environment, prefix + "API_TOKEN"));
+          setting(properties, propertyPrefix + "token", environment, prefix + "API_TOKEN"),
+          deployment);
     } catch (IllegalArgumentException failure) {
       throw new ProfileException(
-          "Selected connection requires a valid URL, account email, and API token");
+          "Selected connection requires a valid URL and token; Cloud connections also require an account email");
     }
   }
 
@@ -85,6 +117,14 @@ public final class CloudConnection {
 
   public URI baseUrl() {
     return baseUrl;
+  }
+
+  public Deployment deployment() {
+    return deployment;
+  }
+
+  String apiPath() {
+    return deployment == Deployment.DATA_CENTER ? "/rest/api/2" : "/rest/api/3";
   }
 
   String authorization() {

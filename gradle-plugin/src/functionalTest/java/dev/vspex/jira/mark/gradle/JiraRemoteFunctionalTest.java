@@ -24,6 +24,8 @@ class JiraRemoteFunctionalTest {
   AtomicInteger posts = new AtomicInteger();
   AtomicInteger requests = new AtomicInteger();
   List<String> authorizations = java.util.Collections.synchronizedList(new ArrayList<>());
+  List<String> apiPaths = java.util.Collections.synchronizedList(new ArrayList<>());
+  boolean dataCenter;
   String baseUrl;
   static final String CREDENTIAL = "synthetic-config-cache-credential-one";
 
@@ -56,6 +58,10 @@ class JiraRemoteFunctionalTest {
           requests.incrementAndGet();
           authorizations.add(exchange.getRequestHeaders().getFirst("Authorization"));
           String path = exchange.getRequestURI().getPath();
+          apiPaths.add(path);
+          if (dataCenter) {
+            path = path.replace("/rest/api/2/", "/rest/api/3/");
+          }
           String response;
           int status = 200;
           if (exchange.getRequestMethod().equals("POST")) {
@@ -77,6 +83,12 @@ class JiraRemoteFunctionalTest {
           } else {
             status = 404;
             response = "{}";
+          }
+          if (dataCenter) {
+            response =
+                response
+                    .replace("\"issueTypes\":", "\"values\":")
+                    .replace("\"fields\":[", "\"values\":[");
           }
           byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
           exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -287,6 +299,51 @@ class JiraRemoteFunctionalTest {
         + Base64.getEncoder()
             .encodeToString(
                 ("tester@example.invalid:" + credential).getBytes(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void dataCenterPropertiesUseBearerAndFreshCredentialsWithConfigurationCache() throws Exception {
+    dataCenter = true;
+    String[] args = {
+      "jiraCreate",
+      "--connection=test",
+      "--ticket-profile=bug",
+      "--field=summary=Synthetic",
+      "-Pjira.test.type=data-center",
+      "-Pjira.test.email=",
+      "--configuration-cache"
+    };
+    var first = runner(CREDENTIAL, args).build();
+    assertTrue(first.getOutput().contains("APP-42"));
+    assertTrue(authorizations.stream().allMatch(value -> value.equals("Bearer " + CREDENTIAL)));
+    String rotated = "synthetic-dc-rotated-pat";
+    var second = runner(rotated, args).build();
+    assertTrue(second.getOutput().contains("Reusing configuration cache."));
+    assertEquals("Bearer " + rotated, authorizations.get(authorizations.size() - 1));
+    assertEquals(2, posts.get());
+    runner(
+            rotated,
+            "jiraImportProfile",
+            "--connection=test",
+            "--ticket-profile=imported",
+            "--issue=APP-1",
+            "--output=jira/profile-drafts/imported.md",
+            "-Pjira.test.type=data-center",
+            "-Pjira.test.email=",
+            "--configuration-cache")
+        .build();
+    assertTrue(Files.exists(project.resolve("jira/profile-drafts/imported.md")));
+    assertEquals(2, posts.get());
+    assertTrue(apiPaths.stream().allMatch(path -> path.startsWith("/rest/api/2/")));
+    assertFalse(first.getOutput().contains(CREDENTIAL));
+    assertFalse(second.getOutput().contains(rotated));
+    try (var files = Files.walk(project.resolve(".gradle/configuration-cache"))) {
+      for (Path file : files.filter(Files::isRegularFile).toList()) {
+        String content = new String(Files.readAllBytes(file), StandardCharsets.ISO_8859_1);
+        assertFalse(content.contains(CREDENTIAL));
+        assertFalse(content.contains(rotated));
+      }
+    }
   }
 
   @Test

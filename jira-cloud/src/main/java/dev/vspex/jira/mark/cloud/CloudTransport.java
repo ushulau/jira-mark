@@ -36,7 +36,7 @@ final class CloudTransport {
 
   @SuppressWarnings("unchecked")
   private Map<String, Object> request(String method, String path, String body) {
-    if (!path.startsWith("/rest/api/3/")) {
+    if (!path.startsWith(connection.apiPath() + "/")) {
       throw new IllegalArgumentException("Invalid API path");
     }
     boolean mutation = method.equals("POST");

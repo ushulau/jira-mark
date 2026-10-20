@@ -56,6 +56,7 @@ public final class Main {
             --input FILE           YAML/JSON alias-to-value mapping
             --field ALIAS=VALUE    repeatable; arrays/objects use JSON
             --connection NAME      required for remote commands; JIRA_<NAME>_URL/EMAIL/API_TOKEN
+                                   JIRA_<NAME>_TYPE=cloud (default) or data-center (PAT, no email)
             --issue KEY            import source issue
             --output FILE          import destination; default: jira/profile-drafts/<profile>.md
             --reuse-default ID     import only; explicitly reuse a supported field (repeatable)

@@ -13,7 +13,7 @@ On Windows use `.\gradlew.bat`.
 ## Code map
 
 - `core/` — Gradle-independent profile model, Markdown/YAML parser, validation, draft resolution
-- `jira-cloud/` — execution-time connections, bounded HTTP transport, Jira metadata and field encoding
+- `jira-cloud/` — execution-time Cloud/Data Center connections, bounded HTTP transport, Jira metadata and field encoding
 - `cli/` — command-line adapter over core
 - `gradle-plugin/` — `dev.vspex.jira-mark` plugin and Gradle TestKit tests
 - `dev-rig/` — local consumer using a composite build
@@ -27,4 +27,4 @@ On Windows use `.\gradlew.bat`.
 - Markdown bodies are guidance, not executable instructions or automatic field values.
 - Do not place credentials or real company issue data in tracked files or logs.
 - Remote issue creation must remain an explicit task, outside build/check dependencies.
-- Offline commands remain network-free. Cloud validation, draft import, and explicit creation are implemented; live Jira verification is pending. Do not document deferred operations as implemented.
+- Offline commands remain network-free. Cloud and Data Center validation, draft import, and explicit creation are implemented; live Jira verification is pending. Do not document deferred operations as implemented.
