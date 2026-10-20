@@ -214,6 +214,74 @@ class JiraRemoteFunctionalTest {
     assertEquals(0, posts.get());
   }
 
+  @Test
+  void missingRemoteProfileExplainsTheOptionWithoutContactingJira() {
+    String[] importArgs = {
+      "jiraImportProfile",
+      "--connection=test",
+      "--issue=APP-1",
+      "--output=jira/profiles/new-profile.md",
+      "--reuse-default=labels",
+      "--reuse-default=components",
+      "--configuration-cache"
+    };
+    var first = runner(CREDENTIAL, importArgs).buildAndFail();
+    assertTrue(
+        first.getOutput().contains("INVALID_INPUT: Import requires --ticket-profile=<name>"));
+    assertTrue(first.getOutput().contains("new draft profile"));
+    assertFalse(first.getOutput().contains("property 'profile' doesn't have a configured value"));
+    var second = runner(CREDENTIAL, importArgs).buildAndFail();
+    assertTrue(second.getOutput().contains("Reusing configuration cache."));
+    assertTrue(second.getOutput().contains("Import requires --ticket-profile=<name>"));
+    for (String task : List.of("jiraValidateRemote", "jiraCreate")) {
+      var result =
+          runner(CREDENTIAL, task, "--connection=test", "--configuration-cache").buildAndFail();
+      assertTrue(
+          result
+              .getOutput()
+              .contains("INVALID_INPUT: This operation requires --ticket-profile=<name>"));
+    }
+    assertEquals(0, requests.get());
+    assertEquals(0, posts.get());
+  }
+
+  @Test
+  void missingConnectionExplainsRepositoryDefaultsWithoutContactingJira() {
+    var result =
+        runner(
+                CREDENTIAL,
+                "jiraImportProfile",
+                "--ticket-profile=new-profile",
+                "--issue=APP-1",
+                "--output=jira/profile-drafts/new-profile.md",
+                "--configuration-cache")
+            .buildAndFail();
+    assertTrue(
+        result
+            .getOutput()
+            .contains("INVALID_INPUT: Remote operations require --connection=<name>"));
+    assertTrue(result.getOutput().contains("jira.connection"));
+    assertEquals(0, requests.get());
+  }
+
+  @Test
+  void importRejectsActiveProfileOutputBeforeContactingJira() {
+    var result =
+        runner(
+                CREDENTIAL,
+                "jiraImportProfile",
+                "--connection=test",
+                "--ticket-profile=new-profile",
+                "--issue=APP-1",
+                "--output=jira/profiles/new-profile.md",
+                "--configuration-cache")
+            .buildAndFail();
+    assertTrue(
+        result.getOutput().contains("Import drafts must be outside the active profiles directory"));
+    assertEquals(0, requests.get());
+    assertFalse(Files.exists(project.resolve("jira/profiles/new-profile.md")));
+  }
+
   private static String basic(String credential) {
     return "Basic "
         + Base64.getEncoder()

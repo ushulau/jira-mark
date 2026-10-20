@@ -8,7 +8,7 @@ issues through an explicit command.
 Plugin ID: `dev.vspex.jira-mark`
 
 <!-- jira-mark-version:start -->
-The version is defined in the root `build.gradle` as `version = '0.3.1'`.
+The version is defined in the root `build.gradle` as `version = '0.4.0'`.
 <!-- jira-mark-version:end -->
 
 Both publishing helpers use that version. For local development, use a composite build, Maven
@@ -166,7 +166,7 @@ Publish a development build into your local Maven repository from this repositor
 <!-- jira-mark-version:start -->
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.3.1`) and do not upload to the Plugin
+from the root `build.gradle` (currently `0.4.0`) and do not upload to the Plugin
 Portal.
 <!-- jira-mark-version:end -->
 
@@ -191,7 +191,7 @@ version you published locally:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.3.1'
+    id 'dev.vspex.jira-mark' version '0.4.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -204,7 +204,7 @@ a local checkout or Maven Local:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.3.1'
+    id 'dev.vspex.jira-mark' version '0.4.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -510,6 +510,22 @@ The CLI equivalent, optionally retaining the source issue's labels as a default:
 Choose one import form: existing files are never overwritten. Gradle requires
 `--output`; the CLI defaults to `jira/profile-drafts/<profile>.md` relative to
 the current directory.
+
+For Gradle imports, `--ticket-profile` is the name to assign to the new profile,
+not an existing profile to select. It is required unless the import task's
+`profile` is configured in `build.gradle`; the output filename does not supply
+it automatically. If the task reports a missing `profile`, add
+`--ticket-profile=imported-bug` or configure:
+
+```groovy
+tasks.named('jiraImportProfile') {
+    profile = 'imported-bug'
+}
+```
+
+The import destination must be outside the configured active profiles directory.
+Use `jira/profile-drafts/imported-bug.md` rather than
+`jira/profiles/imported-bug.md`, then review and move the draft to activate it.
 
 Import uses create metadata to define fields and records unsupported fields as
 review notes. It preserves the source issue key, import date, and project/type IDs,

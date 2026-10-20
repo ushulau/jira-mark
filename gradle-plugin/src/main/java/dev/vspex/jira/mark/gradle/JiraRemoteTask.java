@@ -52,6 +52,7 @@ public abstract class JiraRemoteTask extends DefaultTask {
   public abstract DirectoryProperty getProfilesDir();
 
   /** {@return the explicit connection name used to resolve credentials at execution} */
+  @Optional
   @Input
   @Option(
       option = "connection",
@@ -63,8 +64,11 @@ public abstract class JiraRemoteTask extends DefaultTask {
   protected abstract ProviderFactory getProviders();
 
   /** {@return the exact active profile name, or the new draft profile name when importing} */
+  @Optional
   @Input
-  @Option(option = "ticket-profile", description = "Exact profile name")
+  @Option(
+      option = "ticket-profile",
+      description = "Exact profile name; for import, the name to assign to the new draft")
   public abstract Property<String> getProfile();
 
   /** {@return ordered field overrides for validation or creation} */
@@ -122,6 +126,23 @@ public abstract class JiraRemoteTask extends DefaultTask {
         throw new ProfileException("Invalid remote operation");
       }
       boolean importing = operation.equals("import");
+      // Validate required options here so errors name the CLI option rather than the Java property.
+      String profile = getProfile().getOrNull();
+      if (profile == null || profile.isBlank()) {
+        throw new ProfileException(
+            (importing
+                    ? "Import requires --ticket-profile=<name> for the new draft profile"
+                    : "This operation requires --ticket-profile=<name>")
+                + "; alternatively configure the task's profile in build.gradle");
+      }
+      String connection = getConnection().getOrNull();
+      if (connection == null || connection.isBlank()) {
+        throw new ProfileException(
+            "Remote operations require --connection=<name> or a configured jira.connection in build.gradle");
+      }
+      if (importing && (!getIssue().isPresent() || !getOutputFile().isPresent())) {
+        throw new ProfileException("Import requires --issue and --output");
+      }
       if (importing && (getInputFile().isPresent() || !getFields().get().isEmpty())) {
         throw new ProfileException("Import does not accept ticket input or field values");
       }
@@ -134,19 +155,16 @@ public abstract class JiraRemoteTask extends DefaultTask {
       var gateway =
           new CloudJiraGateway(
               CloudConnection.fromConfiguration(
-                  getConnection().get(),
+                  connection,
                   key -> getProviders().gradleProperty(key).getOrNull(),
                   System::getenv));
       Path profiles = getProfilesDir().get().getAsFile().toPath();
       if (importing) {
-        if (!getIssue().isPresent() || !getOutputFile().isPresent()) {
-          throw new ProfileException("Import requires --issue and --output");
-        }
         var result =
             new ProfileImporter(gateway)
                 .importProfile(
                     getIssue().get(),
-                    getProfile().get(),
+                    profile,
                     Set.copyOf(getReuseDefaults().get()),
                     getOutputFile().get().getAsFile().toPath(),
                     profiles);
@@ -160,17 +178,17 @@ public abstract class JiraRemoteTask extends DefaultTask {
                         result.reviewNotes())));
         return;
       }
-      var profile = ProfileRepository.select(profiles, getProfile().get());
+      var selectedProfile = ProfileRepository.select(profiles, profile);
       var input =
           getInputFile().isPresent()
               ? ProfileLoader.readInput(getInputFile().get().getAsFile().toPath())
               : Map.<String, Object>of();
       var workflow = new JiraWorkflow(gateway, new CloudFieldEncoder());
       if (operation.equals("validate")) {
-        workflow.validate(profile, input, getFields().get());
-        getLogger().lifecycle(Json.write(Map.of("valid", true, "profile", profile.name())));
+        workflow.validate(selectedProfile, input, getFields().get());
+        getLogger().lifecycle(Json.write(Map.of("valid", true, "profile", selectedProfile.name())));
       } else {
-        var created = workflow.create(profile, input, getFields().get());
+        var created = workflow.create(selectedProfile, input, getFields().get());
         getLogger()
             .lifecycle(Json.write(Map.of("key", created.key(), "url", created.url().toString())));
       }
