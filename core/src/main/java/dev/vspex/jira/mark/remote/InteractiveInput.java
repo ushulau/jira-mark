@@ -13,6 +13,61 @@ import java.util.Map;
 public final class InteractiveInput {
   private InteractiveInput() {}
 
+  public static boolean confirmPull(
+      TicketPuller.Preview preview, BufferedReader reader, PrintStream prompts) {
+    if (reader == null) return false;
+    prompts.print(
+        "Pull "
+            + preview.key()
+            + " into the input file; changed fields: "
+            + String.join(", ", preview.changedFields())
+            + (preview.changesBinding() ? "; link input to this issue" : "")
+            + ". Overwrite local values? [y/N]: ");
+    prompts.flush();
+    try {
+      String answer = reader.readLine();
+      return answer != null
+          && (answer.trim().equalsIgnoreCase("y") || answer.trim().equalsIgnoreCase("yes"));
+    } catch (IOException failure) {
+      throw new JiraFailure(
+          JiraFailure.Code.CANCELLED,
+          "Cannot read pull confirmation; the input file was not changed");
+    }
+  }
+
+  public static TicketPublisher.Decision chooseExisting(
+      String issueKey, BufferedReader reader, PrintStream prompts) {
+    if (reader == null) return TicketPublisher.Decision.CANCEL;
+    try {
+      while (true) {
+        prompts.print(
+            "Input was previously published as "
+                + issueKey
+                + ". [u]pdate existing, [n]ew issue, or [c]ancel (default): ");
+        prompts.flush();
+        String answer = reader.readLine();
+        if (answer == null || answer.isBlank() || answer.equals(":cancel")) {
+          return TicketPublisher.Decision.CANCEL;
+        }
+        switch (answer.trim().toLowerCase(java.util.Locale.ROOT)) {
+          case "u", "update" -> {
+            return TicketPublisher.Decision.UPDATE;
+          }
+          case "n", "new", "create" -> {
+            return TicketPublisher.Decision.CREATE;
+          }
+          case "c", "cancel" -> {
+            return TicketPublisher.Decision.CANCEL;
+          }
+          default -> prompts.println("Choose update, new, or cancel.");
+        }
+      }
+    } catch (IOException failure) {
+      throw new JiraFailure(
+          JiraFailure.Code.CANCELLED, "Cannot read the publication choice; no issue was submitted");
+    }
+  }
+
   public static Map<String, Object> complete(
       Profile profile,
       Map<String, Object> input,

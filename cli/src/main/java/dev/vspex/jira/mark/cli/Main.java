@@ -1,6 +1,7 @@
 package dev.vspex.jira.mark.cli;
 
 import dev.vspex.jira.mark.cloud.CloudConnection;
+import dev.vspex.jira.mark.cloud.CloudFieldDecoder;
 import dev.vspex.jira.mark.cloud.CloudFieldEncoder;
 import dev.vspex.jira.mark.cloud.CloudJiraGateway;
 import dev.vspex.jira.mark.json.Json;
@@ -13,6 +14,8 @@ import dev.vspex.jira.mark.remote.JiraFailure;
 import dev.vspex.jira.mark.remote.JiraGateway;
 import dev.vspex.jira.mark.remote.JiraWorkflow;
 import dev.vspex.jira.mark.remote.ProfileImporter;
+import dev.vspex.jira.mark.remote.TicketPublisher;
+import dev.vspex.jira.mark.remote.TicketPuller;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -50,17 +53,21 @@ public final class Main {
     if (args.length == 0 || args[0].equals("--help")) {
       out.println(
           """
-          Usage: jira-mark <profiles|validate|preview|validate-remote|import|create> [options]
+          Usage: jira-mark <profiles|validate|preview|validate-remote|import|create|pull> [options]
             --profiles-dir DIR     default: jira/profiles
-            --profile NAME         exact profile name; required for preview/validate-remote/create/import
-            --input FILE           YAML/JSON alias-to-value mapping
+            --profile NAME         exact profile name; required for preview/validate-remote/create/import/pull
+            --input FILE           YAML/JSON alias-to-value mapping; required for pull
             --field ALIAS=VALUE    repeatable; arrays/objects use JSON
             --connection NAME      required for remote commands; JIRA_<NAME>_URL/EMAIL/API_TOKEN
                                    JIRA_<NAME>_TYPE=cloud (default) or data-center (PAT, no email)
-            --issue KEY            import source issue
+            --issue KEY            import source, or explicit pull target when no recorded issue exists
             --output FILE          import destination; default: jira/profile-drafts/<profile>.md
             --reuse-default ID     import only; explicitly reuse a supported field (repeatable)
             --interactive          preview/validate-remote/create only; terminal required; :cancel aborts
+            --on-existing ACTION   create only: ask (default), create, update, or cancel
+            --history-dir DIR      create/pull: default .gradle/jira-mark/publications
+            --dry-run              pull only: show changed field names without writing
+            --overwrite            pull only: approve replacing local values without prompting
 
           profiles, validate, and preview are offline. Only create submits an issue.
           import never overwrites or activates a profile. Descriptions are literal text, not Markdown rendering.
@@ -69,22 +76,33 @@ public final class Main {
     }
     try {
       String command = args[0];
-      if (!List.of("profiles", "validate", "preview", "validate-remote", "import", "create")
+      if (!List.of("profiles", "validate", "preview", "validate-remote", "import", "create", "pull")
           .contains(command)) {
         throw new ProfileException("Unknown command; use --help");
       }
       Path directory = Path.of("jira/profiles");
       String profile = null, connection = null, issue = null;
       Path inputFile = null, output = null;
+      Path historyDirectory = Path.of(".gradle/jira-mark/publications");
+      String onExisting = "ask";
       var fields = new ArrayList<String>();
       var defaults = new HashSet<String>();
       var supplied = new HashSet<String>();
       boolean interactive = false;
+      boolean dryRun = false, overwrite = false;
       for (int i = 1; i < args.length; i++) {
         String option = args[i];
         supplied.add(option);
         if (option.equals("--interactive")) {
           interactive = true;
+          continue;
+        }
+        if (option.equals("--dry-run")) {
+          dryRun = true;
+          continue;
+        }
+        if (option.equals("--overwrite")) {
+          overwrite = true;
           continue;
         }
         if (++i >= args.length) {
@@ -99,6 +117,8 @@ public final class Main {
           case "--issue" -> issue = args[i];
           case "--output" -> output = Path.of(args[i]);
           case "--reuse-default" -> defaults.add(args[i]);
+          case "--on-existing" -> onExisting = args[i];
+          case "--history-dir" -> historyDirectory = Path.of(args[i]);
           default -> throw new ProfileException("Unknown option; use --help");
         }
       }
@@ -115,6 +135,26 @@ public final class Main {
                     "--issue",
                     "--output",
                     "--reuse-default");
+            case "create" ->
+                Set.of(
+                    "--profiles-dir",
+                    "--profile",
+                    "--connection",
+                    "--input",
+                    "--field",
+                    "--interactive",
+                    "--on-existing",
+                    "--history-dir");
+            case "pull" ->
+                Set.of(
+                    "--profiles-dir",
+                    "--profile",
+                    "--connection",
+                    "--input",
+                    "--issue",
+                    "--history-dir",
+                    "--dry-run",
+                    "--overwrite");
             default ->
                 Set.of(
                     "--profiles-dir",
@@ -127,7 +167,7 @@ public final class Main {
       if (!allowed.containsAll(supplied)) {
         throw new ProfileException("Options do not apply to this command; use --help");
       }
-      boolean remote = List.of("validate-remote", "import", "create").contains(command);
+      boolean remote = List.of("validate-remote", "import", "create", "pull").contains(command);
       if (remote && (connection == null || connection.isBlank())) {
         throw new ProfileException("--connection is required");
       }
@@ -164,6 +204,24 @@ public final class Main {
         return 0;
       }
       var selected = ProfileRepository.select(directory, profile);
+      if (command.equals("pull")) {
+        if (inputFile == null)
+          throw new ProfileException("Pull requires --input pointing to an existing ticket file");
+        var result =
+            new TicketPuller(connections.apply(connection), new CloudFieldDecoder())
+                .pull(
+                    historyDirectory,
+                    connection,
+                    directory,
+                    selected,
+                    inputFile,
+                    issue,
+                    dryRun,
+                    overwrite,
+                    preview -> InteractiveInput.confirmPull(preview, reader, err));
+        out.println(Json.write(result.description()));
+        return 0;
+      }
       Map<String, Object> input = inputFile == null ? Map.of() : ProfileLoader.readInput(inputFile);
       JiraGateway gateway = remote ? connections.apply(connection) : null;
       if (interactive) {
@@ -185,7 +243,18 @@ public final class Main {
           workflow.validate(selected, input, fields);
           out.println(Json.write(Map.of("valid", true, "profile", profile)));
         } else {
-          var created = workflow.create(selected, input, fields);
+          var created =
+              new TicketPublisher(gateway, new CloudFieldEncoder())
+                  .publish(
+                      historyDirectory,
+                      connection,
+                      directory,
+                      selected,
+                      inputFile,
+                      input,
+                      fields,
+                      onExisting,
+                      key -> InteractiveInput.chooseExisting(key, reader, err));
           out.println(Json.write(Map.of("key", created.key(), "url", created.url().toString())));
         }
       }

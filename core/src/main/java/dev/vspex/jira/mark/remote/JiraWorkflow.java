@@ -22,20 +22,52 @@ public final class JiraWorkflow {
       Profile profile, Map<String, Object> input, List<String> args) {
     var draft = DraftResolver.resolve(profile, input, args);
     var metadata = gateway.metadata(profile.project(), profile.issueType());
+    return encode(profile, draft, metadata, true);
+  }
+
+  public Map<String, Object> validateUpdate(
+      Profile profile,
+      Map<String, Object> input,
+      List<String> args,
+      String issueKey,
+      String expectedProject,
+      String expectedIssueType) {
+    var draft = DraftResolver.resolve(profile, input, args);
+    var metadata = gateway.editMetadata(issueKey);
+    if (!metadata.projectId().equals(expectedProject)
+        || !metadata.issueTypeId().equals(expectedIssueType)) {
+      throw new JiraFailure(
+          REMOTE_VALIDATION,
+          "The published issue has moved to another project or issue type; inspect Jira before updating");
+    }
+    return encode(profile, draft, metadata, false);
+  }
+
+  private Map<String, Object> encode(
+      Profile profile, Map<String, Object> draft, JiraGateway.Metadata metadata, boolean creating) {
     var localValues = (Map<?, ?>) draft.get("fields");
     Map<String, Object> fields = new LinkedHashMap<>();
-    fields.put("project", Map.of("id", metadata.projectId()));
-    fields.put("issuetype", Map.of("id", metadata.issueTypeId()));
+    if (creating) {
+      fields.put("project", Map.of("id", metadata.projectId()));
+      fields.put("issuetype", Map.of("id", metadata.issueTypeId()));
+    }
     profile
         .fields()
         .forEach(
             (alias, definition) -> {
+              Object value = localValues.get(definition.id());
+              if (!creating && value == null) {
+                return;
+              }
               var remote = metadata.fields().get(definition.id());
               if (remote == null || !remote.settable()) {
                 throw new JiraFailure(
-                    REMOTE_VALIDATION, "Field '" + alias + "' is unavailable for creation");
+                    REMOTE_VALIDATION,
+                    "Field '"
+                        + alias
+                        + "' is unavailable for "
+                        + (creating ? "creation" : "editing"));
               }
-              Object value = localValues.get(definition.id());
               if (value != null && remote.required() && empty(value)) {
                 throw new JiraFailure(
                     REMOTE_VALIDATION, "Jira requires a nonempty field '" + alias + "'");
@@ -44,7 +76,7 @@ public final class JiraWorkflow {
                 fields.put(definition.id(), encoder.encode(remote, value, alias));
               }
             });
-    for (var field : metadata.fields().values()) {
+    for (var field : creating ? metadata.fields().values() : List.<JiraGateway.Field>of()) {
       if (field.id().equals("project") || field.id().equals("issuetype")) {
         continue;
       }

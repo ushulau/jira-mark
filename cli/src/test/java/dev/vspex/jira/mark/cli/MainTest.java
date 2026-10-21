@@ -21,6 +21,8 @@ import org.junit.jupiter.api.io.TempDir;
 class MainTest {
   @TempDir Path directory;
   int posts;
+  int updates;
+  Map<String, Object> updatedPayload;
   int connections;
   ByteArrayOutputStream output;
   ByteArrayOutputStream error;
@@ -67,9 +69,24 @@ class MainTest {
         throw new AssertionError("Import was not requested");
       }
 
+      public IssueSnapshot readIssue(String key, java.util.Set<String> ids) {
+        return new IssueSnapshot(
+            key, "100", "APP", "2", "Bug", Map.of("summary", "Changed remotely", "count", 1));
+      }
+
       public CreatedIssue create(Map<String, Object> payload) {
         posts++;
         return new CreatedIssue("APP-42", URI.create("https://example.invalid/browse/APP-42"));
+      }
+
+      public Metadata editMetadata(String key) {
+        return metadata("APP", "Bug");
+      }
+
+      public CreatedIssue update(String key, Map<String, Object> payload) {
+        updates++;
+        updatedPayload = payload;
+        return new CreatedIssue(key, URI.create("https://example.invalid/browse/" + key));
       }
     };
   }
@@ -79,6 +96,9 @@ class MainTest {
         new java.util.ArrayList<String>(
             List.of(command, "--profiles-dir", directory.toString(), "--profile", "bug"));
     args.addAll(List.of(options));
+    if (command.equals("create") || command.equals("pull")) {
+      args.addAll(List.of("--history-dir", directory.resolve("history").toString()));
+    }
     return Main.run(
         args.toArray(String[]::new),
         new PrintStream(output),
@@ -190,5 +210,58 @@ class MainTest {
     assertEquals(3, status);
     assertEquals("AUTHENTICATION", ((Map<?, ?>) Json.parse(error.toString())).get("error"));
     assertEquals("", output.toString());
+  }
+
+  @Test
+  void repeatedFilePromptsForUpdateNewOrCancelAndNoninteractiveModeDoesNotSubmit()
+      throws Exception {
+    Path input = directory.resolve("ticket.json");
+    Files.writeString(input, "{\"summary\":\"Original\",\"count\":0}");
+    assertEquals(0, run("create", null, "--connection", "test", "--input", input.toString()));
+    Files.writeString(input, "{\"summary\":\"Edited\",\"count\":0}");
+    assertEquals(
+        0, run("create", "invalid\nu\n", "--connection", "test", "--input", input.toString()));
+    assertEquals(1, posts);
+    assertEquals(1, updates);
+    assertEquals("Edited", ((Map<?, ?>) updatedPayload.get("fields")).get("summary"));
+    assertTrue(error.toString().contains("previously published as APP-42"));
+    assertTrue(error.toString().contains("Choose update, new, or cancel"));
+    assertEquals(9, run("create", null, "--connection", "test", "--input", input.toString()));
+    assertEquals(
+        9, run("create", ":cancel\n", "--connection", "test", "--input", input.toString()));
+    assertEquals(0, run("create", "n\n", "--connection", "test", "--input", input.toString()));
+    assertEquals(2, posts);
+    assertEquals(1, updates);
+    assertEquals(
+        0,
+        run(
+            "create",
+            null,
+            "--connection",
+            "test",
+            "--input",
+            input.toString(),
+            "--on-existing",
+            "update"));
+    assertEquals(2, updates);
+  }
+
+  @Test
+  void pullUsesRecordedIssueAndRequiresApprovalBeforeReplacingLocalEdits() throws Exception {
+    Path input = directory.resolve("ticket.json");
+    Files.writeString(input, "{\"summary\":\"Local\",\"count\":0}");
+    assertEquals(0, run("create", null, "--connection", "test", "--input", input.toString()));
+    assertEquals(
+        0, run("pull", null, "--connection", "test", "--input", input.toString(), "--dry-run"));
+    assertTrue(Files.readString(input).contains("Local"));
+    assertEquals(9, run("pull", null, "--connection", "test", "--input", input.toString()));
+    assertEquals(0, run("pull", "yes\n", "--connection", "test", "--input", input.toString()));
+    assertTrue(Files.readString(input).contains("Changed remotely"));
+    assertTrue(error.toString().contains("Overwrite local values"));
+    assertFalse(output.toString().contains("Changed remotely"));
+    assertEquals(1, posts);
+    assertEquals(0, updates);
+    assertEquals(0, run("pull", null, "--connection", "test", "--input", input.toString()));
+    assertEquals(2, run("pull", null, "--connection", "test"));
   }
 }

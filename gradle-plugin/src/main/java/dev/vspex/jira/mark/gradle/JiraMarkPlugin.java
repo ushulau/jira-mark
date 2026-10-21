@@ -67,6 +67,12 @@ public final class JiraMarkPlugin implements Plugin<Project> {
         "jiraCreate",
         "create",
         "Explicitly creates one Jira issue after validation.");
+    registerRemote(
+        project,
+        extension,
+        "jiraPull",
+        "pull",
+        "Pulls current issue fields into a ticket input file after overwrite approval.");
   }
 
   private static void registerRemote(
@@ -83,6 +89,12 @@ public final class JiraMarkPlugin implements Plugin<Project> {
               task.getOperation().disallowChanges();
               task.getProfilesDir().convention(extension.getProfilesDir());
               task.getConnection().convention(extension.getConnection());
+              task.getPublicationHistoryDir()
+                  .convention(
+                      project
+                          .getLayout()
+                          .getProjectDirectory()
+                          .dir(".gradle/jira-mark/publications"));
             });
   }
 }

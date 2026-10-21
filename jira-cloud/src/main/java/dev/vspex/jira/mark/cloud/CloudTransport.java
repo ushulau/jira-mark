@@ -34,12 +34,17 @@ final class CloudTransport {
     return request("POST", path, Json.write(body));
   }
 
+  void put(String path, Map<String, Object> body) {
+    request("PUT", path, Json.write(body));
+  }
+
   @SuppressWarnings("unchecked")
   private Map<String, Object> request(String method, String path, String body) {
     if (!path.startsWith(connection.apiPath() + "/")) {
       throw new IllegalArgumentException("Invalid API path");
     }
-    boolean mutation = method.equals("POST");
+    boolean updating = method.equals("PUT");
+    boolean mutation = method.equals("POST") || updating;
     byte[] bytes = body == null ? new byte[0] : body.getBytes(StandardCharsets.UTF_8);
     if (bytes.length > MAX_BODY) {
       throw new JiraFailure(INVALID_INPUT, "Jira request exceeds the size limit");
@@ -84,7 +89,7 @@ final class CloudTransport {
           throw new JiraFailure(PERMISSION_DENIED, "Jira denied access to this operation");
         }
         if (mutation && (status == 408 || status >= 500 || status >= 300 && status < 400)) {
-          throw uncertain();
+          throw uncertain(updating);
         }
         if (status < 200 || status >= 300) {
           throw new JiraFailure(
@@ -95,15 +100,20 @@ final class CloudTransport {
                   + status
                   + "); verify permissions, field mappings, and choices");
         }
-        if (mutation && status != 201) {
-          throw uncertain();
+        if (updating && status == 204) {
+          return Map.of();
+        }
+        if (mutation && (updating || status != 201)) {
+          throw uncertain(updating);
         }
         String contentType = request.getContentType();
         if (contentType == null
             || !contentType.toLowerCase(java.util.Locale.ROOT).contains("application/json")) {
           throw new JiraFailure(
-              mutation ? UNCERTAIN_CREATION : INVALID_RESPONSE,
-              mutation ? uncertain().getMessage() : "Jira returned an unexpected response type");
+              mutation ? (updating ? UNCERTAIN_UPDATE : UNCERTAIN_CREATION) : INVALID_RESPONSE,
+              mutation
+                  ? uncertain(updating).getMessage()
+                  : "Jira returned an unexpected response type");
         }
         try (var input = request.getInputStream();
             var output = new ByteArrayOutputStream()) {
@@ -138,7 +148,7 @@ final class CloudTransport {
         }
       } catch (IOException failure) {
         if (mutation) {
-          throw uncertain();
+          throw uncertain(updating);
         }
         if (attempt == 2) {
           throw new JiraFailure(
@@ -149,7 +159,7 @@ final class CloudTransport {
         throw new JiraFailure(CANCELLED, "Jira operation was interrupted");
       } catch (IllegalArgumentException failure) {
         if (mutation) {
-          throw uncertain();
+          throw uncertain(updating);
         }
         throw new JiraFailure(INVALID_RESPONSE, "Jira returned invalid JSON");
       } finally {
@@ -170,8 +180,14 @@ final class CloudTransport {
   }
 
   static JiraFailure uncertain() {
+    return uncertain(false);
+  }
+
+  private static JiraFailure uncertain(boolean updating) {
     return new JiraFailure(
-        UNCERTAIN_CREATION,
-        "Jira may have created the issue. Check Jira before retrying; the request was not resubmitted");
+        updating ? UNCERTAIN_UPDATE : UNCERTAIN_CREATION,
+        "Jira may have "
+            + (updating ? "updated" : "created")
+            + " the issue. Check Jira before retrying; the request was not resubmitted");
   }
 }

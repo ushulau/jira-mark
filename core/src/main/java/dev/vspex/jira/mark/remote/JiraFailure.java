@@ -10,7 +10,8 @@ public final class JiraFailure extends RuntimeException {
     REMOTE_UNAVAILABLE(6),
     UNCERTAIN_CREATION(7),
     INVALID_RESPONSE(8),
-    CANCELLED(9);
+    CANCELLED(9),
+    UNCERTAIN_UPDATE(10);
 
     private final int exitCode;
 

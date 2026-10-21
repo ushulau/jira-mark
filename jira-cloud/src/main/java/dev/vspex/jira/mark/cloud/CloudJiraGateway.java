@@ -92,6 +92,71 @@ public final class CloudJiraGateway implements JiraGateway {
     return new CreatedIssue(text, URI.create(connection.baseUrl() + "/browse/" + text));
   }
 
+  @Override
+  public Metadata editMetadata(String issueKey) {
+    var issue = example(issueKey);
+    var data = http.get(connection.apiPath() + "/issue/" + segment(issueKey) + "/editmeta");
+    var fields = new LinkedHashMap<String, Field>();
+    object(data.get("fields"))
+        .forEach(
+            (fieldId, definition) -> {
+              if (!fieldId.matches("[A-Za-z][A-Za-z0-9_]*")) throw invalid();
+              fields.put(fieldId, parseField(fieldId, object(definition)));
+            });
+    return new Metadata(issue.projectId(), issue.issueTypeId(), fields);
+  }
+
+  @Override
+  public CreatedIssue update(String issueKey, Map<String, Object> payload) {
+    if (issueKey == null || !issueKey.matches("[A-Za-z][A-Za-z0-9_]*-[0-9]+")) {
+      throw new JiraFailure(INVALID_INPUT, "Issue must be a Jira issue key");
+    }
+    http.put(connection.apiPath() + "/issue/" + segment(issueKey), payload);
+    return new CreatedIssue(issueKey, URI.create(connection.baseUrl() + "/browse/" + issueKey));
+  }
+
+  @Override
+  public String publicationScope() {
+    return connection.deployment() + ":" + connection.baseUrl();
+  }
+
+  @Override
+  public IssueSnapshot readIssue(String issueKey, Set<String> fieldIds) {
+    if (issueKey == null
+        || !issueKey.matches("[A-Za-z][A-Za-z0-9_]*-[0-9]+")
+        || fieldIds.stream().anyMatch(field -> !field.matches("[A-Za-z][A-Za-z0-9_]*"))) {
+      throw new JiraFailure(
+          INVALID_INPUT, "Pull requires an exact Jira issue key and valid field IDs");
+    }
+    var selected = new java.util.TreeSet<>(fieldIds);
+    selected.addAll(Set.of("project", "issuetype"));
+    var data =
+        http.get(
+            connection.apiPath()
+                + "/issue/"
+                + segment(issueKey)
+                + "?fields="
+                + String.join(",", selected));
+    var fields = object(data.get("fields"));
+    var project = object(fields.get("project"));
+    var type = object(fields.get("issuetype"));
+    String key = id(data, "key");
+    if (!key.matches("[A-Za-z][A-Za-z0-9_]*-[0-9]+")) throw invalid();
+    Object typeName = type.get("name");
+    if (!(typeName instanceof String name) || name.isBlank()) throw invalid();
+    var requested = new LinkedHashMap<String, Object>();
+    for (String field : fieldIds) {
+      if (!fields.containsKey(field)) {
+        throw new JiraFailure(
+            REMOTE_VALIDATION,
+            "A requested Jira field is unavailable; verify profile mappings and read permissions");
+      }
+      requested.put(field, fields.get(field));
+    }
+    return new IssueSnapshot(
+        key, id(project, "id"), id(project, "key"), id(type, "id"), name, requested);
+  }
+
   private List<Map<String, Object>> pages(String path, String key) {
     var result = new ArrayList<Map<String, Object>>();
     int start = 0;

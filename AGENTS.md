@@ -26,5 +26,8 @@ On Windows use `.\gradlew.bat`.
 - Profile selection is explicit and exact; never guess between multiple profiles.
 - Markdown bodies are guidance, not executable instructions or automatic field values.
 - Do not place credentials or real company issue data in tracked files or logs.
+- Keep documentation and sample profiles organization-neutral. Use fictional project keys, example domains, and placeholder credentials.
 - Remote issue creation must remain an explicit task, outside build/check dependencies.
-- Offline commands remain network-free. Cloud and Data Center validation, draft import, and explicit creation are implemented; live Jira verification is pending. Do not document deferred operations as implemented.
+- Repeated-input updates also require an explicit user choice or policy; never guess an issue match or retry an ambiguous mutation.
+- Pull is read-only against Jira. Confirm local overwrites, keep a backup, and reject lossy field conversions.
+- Offline commands remain network-free. Cloud and Data Center validation, profile import, explicit creation/updates, and pulling ticket values into local files are implemented; live Jira verification is pending. Do not document deferred operations as implemented.

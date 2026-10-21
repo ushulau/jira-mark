@@ -1,6 +1,7 @@
 package dev.vspex.jira.mark.gradle;
 
 import dev.vspex.jira.mark.cloud.CloudConnection;
+import dev.vspex.jira.mark.cloud.CloudFieldDecoder;
 import dev.vspex.jira.mark.cloud.CloudFieldEncoder;
 import dev.vspex.jira.mark.cloud.CloudJiraGateway;
 import dev.vspex.jira.mark.json.Json;
@@ -10,6 +11,8 @@ import dev.vspex.jira.mark.profile.ProfileRepository;
 import dev.vspex.jira.mark.remote.JiraFailure;
 import dev.vspex.jira.mark.remote.JiraWorkflow;
 import dev.vspex.jira.mark.remote.ProfileImporter;
+import dev.vspex.jira.mark.remote.TicketPublisher;
+import dev.vspex.jira.mark.remote.TicketPuller;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -20,6 +23,7 @@ import org.gradle.api.DefaultTask;
 import org.gradle.api.GradleException;
 import org.gradle.api.file.DirectoryProperty;
 import org.gradle.api.file.RegularFileProperty;
+import org.gradle.api.internal.tasks.userinput.UserInputHandler;
 import org.gradle.api.provider.ListProperty;
 import org.gradle.api.provider.Property;
 import org.gradle.api.provider.ProviderFactory;
@@ -39,11 +43,12 @@ public abstract class JiraRemoteTask extends DefaultTask {
         "Remote state and credentials must not be captured in Gradle execution history");
     getFields().convention(List.of());
     getReuseDefaults().convention(List.of());
+    getOnExisting().convention("ask");
+    getDryRun().convention(false);
+    getOverwrite().convention(false);
   }
 
-  /**
-   * {@return the plugin-selected operation: {@code import}, {@code validate}, or {@code create}}
-   */
+  /** {@return the plugin-selected operation: import, validate, create, or pull} */
   @Input
   public abstract Property<String> getOperation();
 
@@ -62,6 +67,35 @@ public abstract class JiraRemoteTask extends DefaultTask {
   /** {@return the factory for resolving Gradle properties during task execution} */
   @Inject
   protected abstract ProviderFactory getProviders();
+
+  /** {@return Gradle's client console prompt service, which cancels in noninteractive builds} */
+  @Inject
+  protected abstract UserInputHandler getUserInputHandler();
+
+  /** {@return the local publication journal directory, outside the build output directory} */
+  @Internal
+  public abstract DirectoryProperty getPublicationHistoryDir();
+
+  /** {@return the repeated-input policy: ask, create, update, or cancel} */
+  @Input
+  @Option(
+      option = "on-existing",
+      description = "Repeated input: ask (default), create, update, or cancel")
+  public abstract Property<String> getOnExisting();
+
+  /** {@return whether pull should report changes without modifying the input file} */
+  @Input
+  @Option(
+      option = "preview",
+      description = "Pull only: preview changed field names without writing the input file")
+  public abstract Property<Boolean> getDryRun();
+
+  /** {@return whether pull has explicit approval to overwrite differing local values} */
+  @Input
+  @Option(
+      option = "overwrite",
+      description = "Pull only: approve replacing local values without prompting")
+  public abstract Property<Boolean> getOverwrite();
 
   /** {@return the exact active profile name, or the new draft profile name when importing} */
   @Optional
@@ -85,15 +119,15 @@ public abstract class JiraRemoteTask extends DefaultTask {
     getFields().set(fields);
   }
 
-  /** {@return the optional YAML or JSON input for validation or creation} */
+  /** {@return the YAML or JSON ticket input; required for pull} */
   @Internal
   @Option(option = "input", description = "YAML/JSON alias values")
   public abstract RegularFileProperty getInputFile();
 
-  /** {@return the source issue key for import} */
+  /** {@return the source issue key for import or the optional explicit target for pull} */
   @Optional
   @Input
-  @Option(option = "issue", description = "Import source issue key")
+  @Option(option = "issue", description = "Import source issue key or explicit pull target")
   public abstract Property<String> getIssue();
 
   /**
@@ -122,10 +156,11 @@ public abstract class JiraRemoteTask extends DefaultTask {
   public void executeRemote() {
     try {
       String operation = getOperation().get();
-      if (!List.of("import", "validate", "create").contains(operation)) {
+      if (!List.of("import", "validate", "create", "pull").contains(operation)) {
         throw new ProfileException("Invalid remote operation");
       }
       boolean importing = operation.equals("import");
+      boolean pulling = operation.equals("pull");
       // Validate required options here so errors name the CLI option rather than the Java property.
       String profile = getProfile().getOrNull();
       if (profile == null || profile.isBlank()) {
@@ -147,10 +182,20 @@ public abstract class JiraRemoteTask extends DefaultTask {
         throw new ProfileException("Import does not accept ticket input or field values");
       }
       if (!importing
-          && (getIssue().isPresent()
+          && (!pulling && getIssue().isPresent()
               || getOutputFile().isPresent()
               || !getReuseDefaults().get().isEmpty())) {
-        throw new ProfileException("Issue, output, and reuse-default options require import");
+        throw new ProfileException(
+            "Output and reuse-default options require import; issue is only supported by import and pull");
+      }
+      if (pulling && (!getInputFile().isPresent() || !getFields().get().isEmpty())) {
+        throw new ProfileException("Pull requires --input and does not accept --field overrides");
+      }
+      if (!pulling && (getDryRun().get() || getOverwrite().get())) {
+        throw new ProfileException("--preview and --overwrite apply only to jiraPull");
+      }
+      if (!operation.equals("create") && !getOnExisting().get().equals("ask")) {
+        throw new ProfileException("--on-existing applies only to jiraCreate");
       }
       var gateway =
           new CloudJiraGateway(
@@ -179,6 +224,36 @@ public abstract class JiraRemoteTask extends DefaultTask {
         return;
       }
       var selectedProfile = ProfileRepository.select(profiles, profile);
+      if (pulling) {
+        var result =
+            new TicketPuller(gateway, new CloudFieldDecoder())
+                .pull(
+                    getPublicationHistoryDir().get().getAsFile().toPath(),
+                    connection,
+                    profiles,
+                    selectedProfile,
+                    getInputFile().get().getAsFile().toPath(),
+                    getIssue().getOrNull(),
+                    getDryRun().get(),
+                    getOverwrite().get(),
+                    preview ->
+                        getUserInputHandler()
+                            .askUser(
+                                questions ->
+                                    questions.askBooleanQuestion(
+                                        "Pull "
+                                            + preview.key()
+                                            + "; replace local fields "
+                                            + String.join(", ", preview.changedFields())
+                                            + (preview.changesBinding()
+                                                ? " and link input to this issue"
+                                                : "")
+                                            + "?",
+                                        false))
+                            .get());
+        getLogger().lifecycle(Json.write(result.description()));
+        return;
+      }
       var input =
           getInputFile().isPresent()
               ? ProfileLoader.readInput(getInputFile().get().getAsFile().toPath())
@@ -188,7 +263,32 @@ public abstract class JiraRemoteTask extends DefaultTask {
         workflow.validate(selectedProfile, input, getFields().get());
         getLogger().lifecycle(Json.write(Map.of("valid", true, "profile", selectedProfile.name())));
       } else {
-        var created = workflow.create(selectedProfile, input, getFields().get());
+        var created =
+            new TicketPublisher(gateway, new CloudFieldEncoder())
+                .publish(
+                    getPublicationHistoryDir().get().getAsFile().toPath(),
+                    connection,
+                    profiles,
+                    selectedProfile,
+                    getInputFile().isPresent() ? getInputFile().get().getAsFile().toPath() : null,
+                    input,
+                    getFields().get(),
+                    getOnExisting().get(),
+                    key -> {
+                      String choice =
+                          getUserInputHandler()
+                              .askUser(
+                                  questions ->
+                                      questions.selectOption(
+                                          "Input was previously published as "
+                                              + key
+                                              + ". Choose how to proceed",
+                                          List.of("cancel", "update", "create"),
+                                          "cancel"))
+                              .get();
+                      return TicketPublisher.Decision.valueOf(
+                          choice.toUpperCase(java.util.Locale.ROOT));
+                    });
         getLogger()
             .lifecycle(Json.write(Map.of("key", created.key(), "url", created.url().toString())));
       }

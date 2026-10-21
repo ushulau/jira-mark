@@ -2,13 +2,13 @@
 
 A Gradle plugin and standalone CLI for repository-owned Jira ticket profiles.
 Each profile combines YAML configuration with Markdown guidance. Prepare tickets
-offline, validate them against Jira Cloud or Data Center, import reusable profiles, and create
-issues through an explicit command.
+offline, validate them against Jira Cloud or Data Center, import reusable profiles,
+create or update issues, and pull Jira changes back into local ticket files.
 
 Plugin ID: `dev.vspex.jira-mark`
 
 <!-- jira-mark-version:start -->
-The version is defined in the root `build.gradle` as `version = '0.5.0'`.
+The version is defined in the root `build.gradle` as `version = '0.6.0'`.
 <!-- jira-mark-version:end -->
 
 Both publishing helpers use that version. For local development, use a composite build, Maven
@@ -24,11 +24,19 @@ approved release.
 | Resolve a ticket draft | `jiraPreview` | `preview` | Offline |
 | Validate ticket values against Jira | `jiraValidateRemote` | `validate-remote` | Read metadata |
 | Import a draft profile from an issue | `jiraImportProfile` | `import` | Read issue and metadata |
-| Create an issue | `jiraCreate` | `create` | Read metadata, then submit |
+| Create an issue or handle a repeated input | `jiraCreate` | `create` | Read metadata, then explicitly create or update |
+| Pull current issue values into an input file | `jiraPull` | `pull` | Read configured fields; never modifies Jira |
 
 Remote commands require a named connection, supplied as an option or a Gradle
 repository default. The plugin does not attach its
-tasks to `build` or `check`. CLI prompting is available through `--interactive`.
+tasks to `build` or `check`. CLI field prompting is available through `--interactive`.
+Repeated submissions offer a create/update/cancel choice when a terminal is available.
+
+All examples use fictional project `APP`, issue keys such as `APP-42`, and
+placeholder Jira URLs and credentials. The connection name `example` is an
+arbitrary local label. Replace these values, custom field IDs, and issue types
+with your own Jira configuration before running remote commands. No particular
+organization, Jira project, or deployment is required.
 
 ## Build and try it locally
 
@@ -166,7 +174,7 @@ Publish a development build into your local Maven repository from this repositor
 <!-- jira-mark-version:start -->
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.5.0`) and do not upload to the Plugin
+from the root `build.gradle` (currently `0.6.0`) and do not upload to the Plugin
 Portal.
 <!-- jira-mark-version:end -->
 
@@ -191,7 +199,7 @@ version you published locally:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.5.0'
+    id 'dev.vspex.jira-mark' version '0.6.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -204,7 +212,7 @@ a local checkout or Maven Local:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.5.0'
+    id 'dev.vspex.jira-mark' version '0.6.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -220,7 +228,7 @@ URL, account email, and token in user Gradle properties or environment variables
 
 ```groovy
 jira {
-    connection = 'work'
+    connection = 'example'
     profilesDir = layout.projectDirectory.dir('jira/profiles')
 }
 
@@ -252,11 +260,17 @@ Each Gradle task option has a corresponding configurable property:
 | --- | --- | --- |
 | `--connection` | `connection` | Remote tasks; defaults to `jira.connection` when configured |
 | `--ticket-profile` | `profile` | Preview and remote tasks |
-| `--input` | `inputFile` | Preview, remote validation, creation |
+| `--input` | `inputFile` | Preview, remote validation, creation, pull |
 | `--field` | `fields` (list of `alias=value` strings) | Preview, remote validation, creation |
-| `--issue` | `issue` | Import |
+| `--issue` | `issue` | Import; optional explicit target for pull |
 | `--output` | `outputFile` | Import; preview also exposes `outputFile` through build configuration |
 | `--reuse-default` | `reuseDefaults` (list of Jira field IDs) | Import |
+| `--on-existing` | `onExisting` (`ask`, `create`, `update`, `cancel`) | `jiraCreate`; default `ask` |
+| `--preview` | `dryRun` (boolean) | `jiraPull`; fetch and compare fields without writing |
+| `--overwrite` | `overwrite` (boolean) | `jiraPull`; approve replacing differing local values |
+
+`jiraCreate` and `jiraPull` also expose `publicationHistoryDir` in build configuration. Its
+default is `.gradle/jira-mark/publications` relative to the consumer project.
 
 For example, configure an import separately from ticket validation:
 
@@ -433,21 +447,23 @@ as explicit input. Enter `:cancel` or EOF to cancel before submission.
 
 The CLI uses option/value pairs, such as `--profile backend-bug`, and repeatable
 `--field ALIAS=VALUE`. Prompts go to stderr; successful results are JSON on
-stdout. Gradle tasks do not support interactive prompting.
+stdout. Gradle tasks do not prompt for missing ticket fields. `jiraCreate`
+can prompt for a repeated-input decision, and `jiraPull` can ask before replacing
+local values, using Gradle's client console.
 
 ### 3. Configure a connection and validate a ticket
 
 For Gradle, store connection settings in your user-level
-`~/.gradle/gradle.properties`, consistent with wiki-mark's Gradle property setup.
+`~/.gradle/gradle.properties`.
 The directory is `.gradle` (with a leading dot), normally
 `%USERPROFILE%\.gradle\gradle.properties` on Windows. If `GRADLE_USER_HOME` is
-customized, use its `gradle.properties` instead. For a connection named `work`:
+customized, use its `gradle.properties` instead. For a connection named `example`:
 
 ```properties
-jira.work.url=https://your-site.atlassian.net
-jira.work.type=cloud
-jira.work.email=your-email@example.com
-jira.work.token=<your Jira API token>
+jira.example.url=https://your-site.atlassian.net
+jira.example.type=cloud
+jira.example.email=your-email@example.com
+jira.example.token=<your Jira API token>
 ```
 
 Keep this file outside the repository. These Jira credentials are separate
@@ -457,9 +473,9 @@ For on-premises **Jira Data Center**, select its connection type and use a
 personal access token (PAT). No email is required:
 
 ```properties
-jira.work.url=https://jira.example.com
-jira.work.type=data-center
-jira.work.token=<your Jira personal access token>
+jira.example.url=https://jira.example.com
+jira.example.type=data-center
+jira.example.token=<your Jira personal access token>
 ```
 
 Include any context path in the URL, for example `https://jira.example.com/jira`.
@@ -473,7 +489,7 @@ The type selects the complete protocol behavior:
 The plugin does not detect deployment type from the hostname or a missing email,
 and it does not retry failed authentication with another scheme. An existing
 Cloud connection keeps its current behavior. For a Data Center PAT rejected
-with `AUTHENTICATION`, ensure `jira.work.type=data-center` is configured.
+with `AUTHENTICATION`, ensure `jira.example.type=data-center` is configured.
 An omitted email alone does not enable Bearer authentication.
 
 Data Center support uses the paginated create-metadata endpoints available in
@@ -485,22 +501,22 @@ Environment variables remain supported by both Gradle and the standalone CLI:
 
 | Gradle property | Environment variable | Value |
 | --- | --- | --- |
-| `jira.work.url` | `JIRA_WORK_URL` | Your HTTPS Jira site base URL, including any context path |
-| `jira.work.type` | `JIRA_WORK_TYPE` | `cloud` (default) or `data-center` |
-| `jira.work.email` | `JIRA_WORK_EMAIL` | Cloud account email; not required for Data Center |
-| `jira.work.token` | `JIRA_WORK_API_TOKEN` | Cloud API token or Data Center PAT, according to the selected type |
+| `jira.example.url` | `JIRA_EXAMPLE_URL` | Your HTTPS Jira site base URL, including any context path |
+| `jira.example.type` | `JIRA_EXAMPLE_TYPE` | `cloud` (default) or `data-center` |
+| `jira.example.email` | `JIRA_EXAMPLE_EMAIL` | Cloud account email; not required for Data Center |
+| `jira.example.token` | `JIRA_EXAMPLE_API_TOKEN` | Cloud API token or Data Center PAT, according to the selected type |
 
 Connection names start with a letter and contain letters, digits, or underscores.
 Property connection names are lowercased; the environment prefix is uppercased.
-Select the connection with `--connection=work`, or set
-`jira { connection = 'work' }` in the consumer's `build.gradle` to use it as the
+Select the connection with `--connection=example`, or set
+`jira { connection = 'example' }` in the consumer's `build.gradle` to use it as the
 default for remote tasks.
 Use another prefix, such as `jira.personal.*` or `JIRA_PERSONAL_*`, for another
 connection.
 
 For each setting, Gradle properties take precedence over the corresponding
 environment variable. Gradle's normal property rules apply: a command-line
-`-Pjira.work.token=...` overrides the user properties file. Prefer the file or
+`-Pjira.example.token=...` overrides the user properties file. Prefer the file or
 credential tooling for secrets so tokens do not appear in shell history or
 command logs. An explicitly empty required property overrides the environment and fails
 validation rather than silently using another credential. Settings absent from
@@ -515,9 +531,9 @@ After adapting the example profile's project, field IDs, and choices to your Jir
 instance, validate its ticket values:
 
 ```powershell
-.\gradlew.bat -p dev-rig jiraValidateRemote --connection=work --ticket-profile=backend-bug --input=ticket.json
+.\gradlew.bat -p dev-rig jiraValidateRemote --connection=example --ticket-profile=backend-bug --input=ticket.json
 
-& $jiraMarkCli validate-remote --connection work --profiles-dir dev-rig/jira/profiles --profile backend-bug --input dev-rig/ticket.json
+& $jiraMarkCli validate-remote --connection example --profiles-dir dev-rig/jira/profiles --profile backend-bug --input dev-rig/ticket.json
 ```
 
 Both forms fetch current create metadata without submitting an issue. A successful
@@ -528,13 +544,13 @@ result contains `{"valid":true,"profile":"backend-bug"}`.
 Import an example issue into a new draft:
 
 ```powershell
-.\gradlew.bat -p dev-rig jiraImportProfile --connection=work --issue=APP-123 --ticket-profile=imported-bug --output=jira/profile-drafts/imported-bug.md
+.\gradlew.bat -p dev-rig jiraImportProfile --connection=example --issue=APP-123 --ticket-profile=imported-bug --output=jira/profile-drafts/imported-bug.md
 ```
 
 The CLI equivalent, optionally retaining the source issue's labels as a default:
 
 ```powershell
-& $jiraMarkCli import --connection work --profiles-dir dev-rig/jira/profiles --profile imported-bug --issue APP-123 --output dev-rig/jira/profile-drafts/imported-bug.md --reuse-default labels
+& $jiraMarkCli import --connection example --profiles-dir dev-rig/jira/profiles --profile imported-bug --issue APP-123 --output dev-rig/jira/profile-drafts/imported-bug.md --reuse-default labels
 ```
 
 Choose one import form: existing files are never overwritten. Gradle requires
@@ -575,26 +591,171 @@ outside the active profile directory, which loads every direct Markdown file.
 Once the profile and input have been reviewed, choose either command:
 
 ```powershell
-.\gradlew.bat -p dev-rig jiraCreate --connection=work --ticket-profile=backend-bug --input=ticket.json
+.\gradlew.bat -p dev-rig jiraCreate --connection=example --ticket-profile=backend-bug --input=ticket.json
 
-& $jiraMarkCli create --connection work --profiles-dir dev-rig/jira/profiles --profile backend-bug --input dev-rig/ticket.json
+& $jiraMarkCli create --connection example --profiles-dir dev-rig/jira/profiles --profile backend-bug --input dev-rig/ticket.json
 ```
 
-**Each invocation is a separate creation attempt.** Creation revalidates against
-fresh metadata, then submits one request. Example success result:
+The first submission creates an issue after validating against fresh metadata.
+Successful publication records the issue key locally. Example success result:
 
 ```json
 {"key":"APP-42","url":"https://example.invalid/browse/APP-42"}
 ```
 
-Creation is never skipped as up-to-date or restored from the build cache. A
-timeout, server error, or unusable success response can leave the result uncertain.
-For `UNCERTAIN_CREATION`, inspect Jira before retrying manually; automatic
-submission retries and duplicate reconciliation are not implemented.
+Creation is never skipped as up-to-date or restored from the build cache.
+
+### 6. Publish an edited input file again
+
+Run the same `jiraCreate` or CLI `create` command after editing the input file.
+If it has a successful publication record, Jira Mark shows the previous issue key
+and asks whether to update it, create a new issue, or cancel. Cancel is the default.
+CLI choices accept `u`/`update`, `n`/`new`/`create`, and `c`/`cancel`; empty input,
+EOF, and `:cancel` cancel. Gradle displays a numbered menu through its client console.
+
+Automation can select the repeated-input action explicitly:
+
+```powershell
+# Update the previously recorded issue with the current input:
+.\gradlew.bat -p dev-rig jiraCreate --connection=example --ticket-profile=backend-bug --input=ticket.json --on-existing=update
+
+# Deliberately create another issue from the same input:
+.\gradlew.bat -p dev-rig jiraCreate --connection=example --ticket-profile=backend-bug --input=ticket.json --on-existing=create
+
+& $jiraMarkCli create --connection example --profiles-dir dev-rig/jira/profiles --profile backend-bug --input dev-rig/ticket.json --on-existing update
+```
+
+The policy applies only when a previous publication exists. A first submission
+still creates an issue. Without a terminal or an explicit policy, a repeat stops
+with `CANCELLED` and submits nothing. Configure a repository policy if desired:
+
+```groovy
+tasks.named('jiraCreate') {
+    onExisting = 'ask'
+}
+```
+
+Matching uses the canonical input file path, named connection, Jira base URL and
+deployment type, profile directory/name, project, and issue type. Changing the
+file's contents or command-line field values preserves its identity. Renaming or
+copying it creates a different identity. Without `--input`, matching uses a hash
+of the resolved draft; edits to those values then count as new input. No summary
+search, guessed matches, or remote issue properties are used.
+
+History is stored in `.gradle/jira-mark/publications` relative to the Gradle
+project or CLI working directory. It survives `clean`. Journal records contain
+only hashes, issue keys, project/type IDs, and submission status—not credentials
+or ticket contents. Pull backups under its `backups/` directory contain the
+original input files and may include private ticket data. Keep the entire
+directory out of source control. The CLI can override its directory with
+`--history-dir DIR`; configure `publicationHistoryDir` on the Gradle task to use
+the same directory when invoking the CLI from another working directory. Both
+adapters must also resolve the same input/profile paths and connection name to
+share a record. Different machines or deleted histories do not share detection.
+Issues published before this feature or created through another tool are not
+automatically recognized; an approved `jiraPull --issue=<key>` can bind one
+explicitly. Choosing create on a repeat records the newly created
+issue as the target for subsequent updates.
+
+An update reads the issue's edit metadata and validates the current effective
+input, including profile defaults and field overrides. It replaces only those
+resolved non-null fields, leaving omitted/null fields unchanged. It does not move
+the issue, change its type, or transition its workflow status. A moved issue,
+missing issue, or unavailable edit field fails rather than falling back to create.
+Cloud rich text remains ADF; Data Center receives the original text/wiki markup.
+
+Neither creation nor update is automatically retried. A local lock prevents
+concurrent publication of the same identity in the same journal. Before a mutation,
+the journal records a pending operation. A timeout, crash, or ambiguous response
+leaves that operation unresolved and blocks further submissions, even with an
+explicit create policy. Inspect Jira before reconciling the named journal file.
+For a known successful mutation, set its `key` to the confirmed Jira issue key and
+`status` to `confirmed`, retaining the recorded project/type IDs. Remove a pending
+record only after confirming no mutation occurred. Do not delete history merely
+to bypass an uncertain result. This provides local repeat detection, not global
+idempotency or automatic recovery of unknown outcomes.
+
+### 7. Pull Jira changes back into ticket.json or ticket.yaml
+
+If someone edits a published issue in Jira, pull its current values into the
+same input file. Select the same connection, profile, input path, and history
+directory used for publication. The recorded issue key is selected automatically:
+
+```powershell
+# Read Jira and show which local aliases would change; do not write:
+.\gradlew.bat -p dev-rig jiraPull --connection=example --ticket-profile=backend-bug --input=ticket.json --preview
+
+# Ask before replacing differing local values:
+.\gradlew.bat -p dev-rig jiraPull --connection=example --ticket-profile=backend-bug --input=ticket.json
+
+# Explicitly approve the overwrite, including for automation:
+.\gradlew.bat -p dev-rig jiraPull --connection=example --ticket-profile=backend-bug --input=ticket.json --overwrite
+```
+
+Use `--preview` for a Gradle pull preview. Gradle's global `--dry-run` skips
+task execution entirely and does not fetch Jira values. The CLI uses `--dry-run`:
+
+```powershell
+& $jiraMarkCli pull --connection example --profiles-dir dev-rig/jira/profiles --profile backend-bug --input dev-rig/ticket.json --dry-run
+& $jiraMarkCli pull --connection example --profiles-dir dev-rig/jira/profiles --profile backend-bug --input dev-rig/ticket.json --overwrite
+```
+
+Each adapter uses its own working-directory-relative history location. To use
+the dev-rig Gradle history from a CLI launched in this repository root, also pass
+`--history-dir dev-rig/.gradle/jira-mark/publications`.
+
+For an older ticket without a local publication record, pass `--issue=APP-42`
+to Gradle or `--issue APP-42` to the CLI. A non-preview, approved pull records
+that binding for subsequent create/update choices. The issue must match the
+profile's project and issue type. Missing, moved, or unavailable fields fail
+without replacing local values. Unresolved publication records still require
+reconciliation before pulling.
+
+The input file must already exist and use `.json`, `.yaml`, or `.yml`. Pull
+fetches only the selected profile's Jira fields and maps their IDs back to local
+aliases, including custom-field aliases. Reference objects are normalized to
+`{"id":"..."}`. Explicit remote nulls are written as nulls to suppress profile
+defaults. Unsupported values or values that violate the profile stop the pull.
+The command needs read access, not issue edit permissions, and never creates,
+updates, or transitions anything in Jira.
+
+Every differing field is treated conservatively: the command asks before
+applying Jira's values, even if it cannot tell whether an unpublished local edit
+or a remote edit caused the difference. Without a terminal, use `--overwrite`
+to approve or `--dry-run` (CLI)/`--preview` (Gradle) to inspect. Cancellation
+leaves the input file unchanged. This is an explicit refresh from Jira, not a
+three-way merge of local and remote edits.
+
+Before writing, the command validates the full candidate and saves an exact
+backup of the original file under the history directory's `backups/` folder.
+The result lists the backup path and changed aliases, without logging field
+values. It replaces the input atomically where supported and aborts if the
+file changes while confirmation is pending. No differences means no input
+rewrite or new backup. JSON is formatted for readability; YAML formatting and
+comments may change, with the originals retained in the backup.
+
+Data Center text/wiki markup is preserved as a string. Cloud ADF is converted
+only for plain paragraphs without formatting marks or other rich nodes, matching
+the text representation produced by this plugin. Formatted text, mentions,
+tables, links, and attachments are not flattened or discarded: unsupported
+content fails the entire pull before writing. Profile Markdown guidance is never
+modified. Update an input file rather than importing another profile when the
+goal is to refresh ticket values.
+
+Defaults can be configured just like other task options:
+
+```groovy
+tasks.named('jiraPull') {
+    profile = 'backend-bug'
+    inputFile = layout.projectDirectory.file('ticket.yaml')
+    // Leave overwrite unset to ask before replacing local values.
+}
+```
 
 ## Jira field support
 
-Remote workflows require every configured field to be available for creation.
+Creation requires every configured field to be available for creation; updates
+require supplied values to be editable according to the issue's edit metadata.
 Projects use exact keys or IDs. Issue type IDs take precedence over names;
 ambiguous names fail. Metadata pagination is followed, and incomplete or excessive
 pagination is rejected.
@@ -642,6 +803,7 @@ Gradle failures include the corresponding error category in their message.
 | 7 | `UNCERTAIN_CREATION` | An issue may exist; inspect Jira before retrying |
 | 8 | `INVALID_RESPONSE` | Malformed or inconsistent read response |
 | 9 | `CANCELLED` | Input or an operation was interrupted |
+| 10 | `UNCERTAIN_UPDATE` | An issue may have been updated; inspect Jira and reconcile history |
 
 Production connections require HTTPS without embedded credentials, query
 parameters, or fragments. HTTP is accepted only for `localhost` and `127.0.0.1`
@@ -650,7 +812,7 @@ test servers. Redirects are disabled.
 Transport limits are 15 seconds per connect/read phase and 2 MB per request or
 response body. Reads have at most three attempts for I/O failures, rate limits,
 or server failures. Numeric `Retry-After` delays up to two seconds are honored;
-longer or unsupported delays stop the operation. Creation requests are never
+longer or unsupported delays stop the operation. Creation and update requests are never
 retried.
 
 Keep credentials, private ticket input, generated drafts, and issue data out of
@@ -666,19 +828,25 @@ command-line overrides, Gradle property/environment precedence, and Gradle
 configuration-cache reuse with credential rotation for both Basic and Bearer authentication.
 Synthetic Data Center tests exercise API v2 metadata pagination, profile import,
 text encoding, creation, and non-retry behavior.
+Repeat-publication tests cover file identity, create/update/cancel choices,
+local locking, unresolved outcomes, Cloud/Data Center edit encoding, and
+configuration-cache reuse with the Gradle console service.
+Pull tests cover JSON/YAML round trips, aliases, nulls, backups, preview and
+confirmation, local edits during a pull, history binding, Cloud/Data Center
+read-only requests, safe ADF conversion, and configuration-cache reuse.
 Remote behavior has not been verified against a
 live Jira instance.
 
 Not implemented: OAuth/scoped-token gateway routing, legacy expanded createmeta, user/date
 fields, cascading selects, app-specific field encodings, dynamic autocomplete,
 metadata caching, Markdown rendering, automatic templates, automatic creation
-recovery, and Gradle prompting.
+recovery, global duplicate detection, and Gradle field prompting.
 
 ## Project layout
 
 ```text
-core/           Profiles, resolution, workflow contracts, import, and prompting
-jira-cloud/     Connections, HTTP transport, metadata, and field encoding
+core/           Profiles, resolution, import, publication history, and ticket synchronization
+jira-cloud/     Cloud/Data Center connections, HTTP transport, metadata, and field conversion
 cli/            Command-line adapter and application distribution
 gradle-plugin/  Gradle extension, tasks, packaging, and TestKit tests
 dev-rig/        Local consumer and synthetic examples
