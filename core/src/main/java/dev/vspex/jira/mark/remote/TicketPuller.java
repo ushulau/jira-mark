@@ -4,6 +4,7 @@ import static dev.vspex.jira.mark.remote.JiraFailure.Code.*;
 
 import dev.vspex.jira.mark.json.Json;
 import dev.vspex.jira.mark.profile.DraftResolver;
+import dev.vspex.jira.mark.profile.FieldDefinition;
 import dev.vspex.jira.mark.profile.Profile;
 import dev.vspex.jira.mark.profile.ProfileException;
 import dev.vspex.jira.mark.profile.ProfileLoader;
@@ -25,7 +26,7 @@ import org.yaml.snakeyaml.DumperOptions;
 import org.yaml.snakeyaml.Yaml;
 
 /**
- * Pulls only configured issue fields into an existing input file, with explicit overwrite approval.
+ * Pulls configured or standard issue fields into a ticket file, with approval before overwriting.
  */
 public final class TicketPuller {
   private final JiraGateway gateway;
@@ -64,12 +65,22 @@ public final class TicketPuller {
       throws IOException {
     if (inputFile == null)
       throw new ProfileException(
-          "Pull requires --input pointing to an existing .json, .yaml, or .yml file");
-    Path target = inputFile.toRealPath();
+          "Pull requires --input pointing to a .json, .yaml, or .yml file; missing files are created with --issue");
+    Path target = PublicationJournal.canonicalPath(inputFile);
     String name = target.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
     if (!(name.endsWith(".json") || name.endsWith(".yaml") || name.endsWith(".yml"))) {
       throw new ProfileException("Pull input must have a .json, .yaml, or .yml extension");
     }
+    boolean exists = Files.exists(target);
+    if (exists && (!Files.isRegularFile(target) || !Files.isReadable(target))) {
+      throw new ProfileException("Pull input must be a readable regular file: " + target);
+    }
+    if (!exists && (explicitIssue == null || explicitIssue.isBlank())) {
+      throw new ProfileException(
+          "Pull input does not exist; use --issue=<key> to create it: " + target);
+    }
+    boolean standardFields = profile == null;
+    if (standardFields) profile = standardProfile();
     try (var journal =
         PublicationJournal.open(
             historyDirectory, gateway, connection, profilesDirectory, profile, target, null)) {
@@ -79,15 +90,20 @@ public final class TicketPuller {
         throw new ProfileException(
             "No publication record exists for this input; use --issue=<key> to select an existing issue explicitly");
       }
-      byte[] original = Files.readAllBytes(target);
-      Map<String, Object> local = ProfileLoader.readInput(target);
+      byte[] original = exists ? Files.readAllBytes(target) : null;
+      Map<String, Object> local = exists ? ProfileLoader.readInput(target) : Map.of();
+      if (standardFields && !profile.fields().keySet().containsAll(local.keySet())) {
+        throw new ProfileException(
+            "Input contains fields outside the standard pull mapping; select its exact profile with --ticket-profile (Gradle) or --profile (CLI)");
+      }
       Set<String> fields =
           profile.fields().values().stream().map(field -> field.id()).collect(Collectors.toSet());
       var remote = gateway.readIssue(key, fields);
-      if (!(profile.project().equals(remote.projectId())
-              || profile.project().equals(remote.projectKey()))
-          || !(profile.issueType().equals(remote.issueTypeId())
-              || profile.issueType().equals(remote.issueTypeName()))
+      if (!standardFields
+              && (!(profile.project().equals(remote.projectId())
+                      || profile.project().equals(remote.projectKey()))
+                  || !(profile.issueType().equals(remote.issueTypeId())
+                      || profile.issueType().equals(remote.issueTypeName())))
           || previous != null
               && (!previous.project().equals(remote.projectId())
                   || !previous.issueType().equals(remote.issueTypeId()))) {
@@ -121,7 +137,8 @@ public final class TicketPuller {
               List.copyOf(changed),
               previous == null || !previous.key().equals(remote.key()));
       if (dryRun) return new Result(remote.key(), target, preview.changedFields(), false, null);
-      if ((!changed.isEmpty() || preview.changesBinding())
+      if (exists
+          && (!changed.isEmpty() || preview.changesBinding())
           && !overwrite
           && !Boolean.TRUE.equals(confirm.apply(preview))) {
         throw new JiraFailure(
@@ -141,11 +158,15 @@ public final class TicketPuller {
       options.setSplitLines(false);
       String text =
           name.endsWith(".json") ? pretty(pulled, 0) + "\n" : new Yaml(options).dump(pulled);
-      Path backups = historyDirectory.resolve("backups");
-      Files.createDirectories(backups);
-      Path backup =
-          Files.createTempFile(backups, "ticket-", name.endsWith(".json") ? ".json" : ".yaml");
-      Files.write(backup, original);
+      Path backup = null;
+      if (exists) {
+        Path backups = historyDirectory.resolve("backups");
+        Files.createDirectories(backups);
+        backup =
+            Files.createTempFile(backups, "ticket-", name.endsWith(".json") ? ".json" : ".yaml");
+        Files.write(backup, original);
+      }
+      Files.createDirectories(target.getParent());
       Path temporary = Files.createTempFile(target.getParent(), ".jira-mark-pull-", ".tmp");
       try {
         Files.writeString(temporary, text, StandardCharsets.UTF_8);
@@ -154,15 +175,19 @@ public final class TicketPuller {
         journal.write(
             new PublicationJournal.Entry(
                 "confirmed", remote.key(), remote.projectId(), remote.issueTypeId()));
-        try {
-          Files.move(
-              temporary,
-              target,
-              StandardCopyOption.ATOMIC_MOVE,
-              StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException unsupported) {
-          Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
-        }
+        if (!exists) {
+          // A concurrent creator must never be overwritten, even with --overwrite.
+          Files.move(temporary, target);
+        } else
+          try {
+            Files.move(
+                temporary,
+                target,
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING);
+          } catch (AtomicMoveNotSupportedException unsupported) {
+            Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+          }
       } catch (IOException failure) {
         try {
           if (previous == null) journal.clear();
@@ -171,21 +196,46 @@ public final class TicketPuller {
           // The explicitly approved issue binding may remain if the filesystem is unavailable.
         }
         throw new ProfileException(
-            "Pull could not replace the input file; its original contents are backed up at "
-                + backup.toAbsolutePath());
+            backup == null
+                ? "Pull could not create the input file; check its parent directory and permissions: "
+                    + target
+                : "Pull could not replace the input file; its original contents are backed up at "
+                    + backup.toAbsolutePath());
       } finally {
         Files.deleteIfExists(temporary);
       }
       return new Result(
-          remote.key(), target, preview.changedFields(), true, backup.toAbsolutePath());
+          remote.key(),
+          target,
+          preview.changedFields(),
+          true,
+          backup == null ? null : backup.toAbsolutePath());
+    } catch (IOException failure) {
+      throw new ProfileException(
+          "Cannot read or write the pull input or publication history; check paths and permissions. Input: "
+              + target
+              + "; history: "
+              + historyDirectory.toAbsolutePath());
     }
   }
 
   private static void requireUnchanged(Path target, byte[] original) throws IOException {
-    if (!Arrays.equals(original, Files.readAllBytes(target))) {
+    if (original == null
+        ? Files.exists(target)
+        : !Files.exists(target) || !Arrays.equals(original, Files.readAllBytes(target))) {
       throw new ProfileException(
           "Input changed while pulling from Jira; no pull values were written. Retry after reviewing local edits");
     }
+  }
+
+  private static Profile standardProfile() {
+    var fields = new LinkedHashMap<String, FieldDefinition>();
+    fields.put("summary", new FieldDefinition("summary", "string", true, null, List.of()));
+    fields.put("description", new FieldDefinition("description", "string", false, null, List.of()));
+    fields.put("labels", new FieldDefinition("labels", "string-list", false, null, List.of()));
+    fields.put("priority", new FieldDefinition("priority", "object", false, null, List.of()));
+    fields.put("components", new FieldDefinition("components", "array", false, null, List.of()));
+    return new Profile("jira-pull-standard", "any", "any", fields, "");
   }
 
   private static String pretty(Object value, int indent) {

@@ -70,6 +70,25 @@ class MainTest {
       }
 
       public IssueSnapshot readIssue(String key, java.util.Set<String> ids) {
+        if (ids.contains("description")) {
+          return new IssueSnapshot(
+              key,
+              "100",
+              "APP",
+              "2",
+              "Bug",
+              Map.of(
+                  "summary",
+                  "Changed remotely",
+                  "description",
+                  "Remote details",
+                  "labels",
+                  List.of(),
+                  "priority",
+                  Map.of("id", "3"),
+                  "components",
+                  List.of()));
+        }
         return new IssueSnapshot(
             key, "100", "APP", "2", "Bug", Map.of("summary", "Changed remotely", "count", 1));
       }
@@ -105,6 +124,29 @@ class MainTest {
         new PrintStream(error),
         this::gateway,
         answers == null ? null : new BufferedReader(new StringReader(answers)));
+  }
+
+  @Test
+  void pullWithoutProfileCreatesMissingYamlWithoutPrompting() throws Exception {
+    Path input = directory.resolve("tickets/new.yaml");
+    String[] args = {
+      "pull",
+      "--connection",
+      "test",
+      "--issue",
+      "APP-42",
+      "--input",
+      input.toString(),
+      "--profiles-dir",
+      directory.resolve("missing-profiles").toString(),
+      "--history-dir",
+      directory.resolve("history").toString()
+    };
+    assertEquals(
+        0, Main.run(args, new PrintStream(output), new PrintStream(error), this::gateway, null));
+    assertTrue(Files.readString(input).contains("Changed remotely"));
+    assertEquals(0, posts);
+    assertEquals(0, updates);
   }
 
   @Test

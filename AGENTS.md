@@ -30,4 +30,5 @@ On Windows use `.\gradlew.bat`.
 - Remote issue creation must remain an explicit task, outside build/check dependencies.
 - Repeated-input updates also require an explicit user choice or policy; never guess an issue match or retry an ambiguous mutation.
 - Pull is read-only against Jira. Confirm local overwrites, keep a backup, and reject lossy field conversions.
+- Pull may create missing local ticket files with an explicit issue key. Profiles are optional for standard fields; never infer a profile for custom fields or aliases.
 - Offline commands remain network-free. Cloud and Data Center validation, profile import, explicit creation/updates, and pulling ticket values into local files are implemented; live Jira verification is pending. Do not document deferred operations as implemented.

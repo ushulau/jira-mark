@@ -55,8 +55,8 @@ public final class Main {
           """
           Usage: jira-mark <profiles|validate|preview|validate-remote|import|create|pull> [options]
             --profiles-dir DIR     default: jira/profiles
-            --profile NAME         exact profile name; required for preview/validate-remote/create/import/pull
-            --input FILE           YAML/JSON alias-to-value mapping; required for pull
+            --profile NAME         exact profile name; optional for pull's standard fields
+            --input FILE           YAML/JSON mapping; pull creates missing files with --issue
             --field ALIAS=VALUE    repeatable; arrays/objects use JSON
             --connection NAME      required for remote commands; JIRA_<NAME>_URL/EMAIL/API_TOKEN
                                    JIRA_<NAME>_TYPE=cloud (default) or data-center (PAT, no email)
@@ -171,7 +171,7 @@ public final class Main {
       if (remote && (connection == null || connection.isBlank())) {
         throw new ProfileException("--connection is required");
       }
-      if (!List.of("profiles", "validate").contains(command)
+      if (!List.of("profiles", "validate", "pull").contains(command)
           && (profile == null || profile.isBlank())) {
         throw new ProfileException("--profile is required");
       }
@@ -203,10 +203,14 @@ public final class Main {
                 Map.of("output", result.output().toString(), "reviewNotes", result.reviewNotes())));
         return 0;
       }
-      var selected = ProfileRepository.select(directory, profile);
+      var selected =
+          command.equals("pull") && (profile == null || profile.isBlank())
+              ? null
+              : ProfileRepository.select(directory, profile);
       if (command.equals("pull")) {
         if (inputFile == null)
-          throw new ProfileException("Pull requires --input pointing to an existing ticket file");
+          throw new ProfileException(
+              "Pull requires --input pointing to a ticket file; missing files are created with --issue");
         var result =
             new TicketPuller(connections.apply(connection), new CloudFieldDecoder())
                 .pull(

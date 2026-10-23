@@ -40,7 +40,10 @@ public final class ProfileRepository {
     Profile profile = profiles.get(name);
     if (profile == null) {
       throw new ProfileException(
-          "Unknown profile '" + name + "'. Available: " + String.join(", ", profiles.keySet()));
+          "Unknown profile '"
+              + name
+              + "'. Select the exact profile name from its YAML header, not a file path. Available: "
+              + String.join(", ", profiles.keySet()));
     }
     return profile;
   }

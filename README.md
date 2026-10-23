@@ -8,7 +8,7 @@ create or update issues, and pull Jira changes back into local ticket files.
 Plugin ID: `dev.vspex.jira-mark`
 
 <!-- jira-mark-version:start -->
-The version is defined in the root `build.gradle` as `version = '0.6.0'`.
+The version is defined in the root `build.gradle` as `version = '0.7.0'`.
 <!-- jira-mark-version:end -->
 
 Both publishing helpers use that version. For local development, use a composite build, Maven
@@ -25,7 +25,7 @@ approved release.
 | Validate ticket values against Jira | `jiraValidateRemote` | `validate-remote` | Read metadata |
 | Import a draft profile from an issue | `jiraImportProfile` | `import` | Read issue and metadata |
 | Create an issue or handle a repeated input | `jiraCreate` | `create` | Read metadata, then explicitly create or update |
-| Pull current issue values into an input file | `jiraPull` | `pull` | Read configured fields; never modifies Jira |
+| Pull current issue values into a new or existing ticket file | `jiraPull` | `pull` | Read standard or configured fields; never modifies Jira |
 
 Remote commands require a named connection, supplied as an option or a Gradle
 repository default. The plugin does not attach its
@@ -174,7 +174,7 @@ Publish a development build into your local Maven repository from this repositor
 <!-- jira-mark-version:start -->
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.6.0`) and do not upload to the Plugin
+from the root `build.gradle` (currently `0.7.0`) and do not upload to the Plugin
 Portal.
 <!-- jira-mark-version:end -->
 
@@ -199,7 +199,7 @@ version you published locally:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.6.0'
+    id 'dev.vspex.jira-mark' version '0.7.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -212,7 +212,7 @@ a local checkout or Maven Local:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.6.0'
+    id 'dev.vspex.jira-mark' version '0.7.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -259,7 +259,7 @@ Each Gradle task option has a corresponding configurable property:
 | Task option | build.gradle task property | Tasks |
 | --- | --- | --- |
 | `--connection` | `connection` | Remote tasks; defaults to `jira.connection` when configured |
-| `--ticket-profile` | `profile` | Preview and remote tasks |
+| `--ticket-profile` | `profile` | Preview and remote tasks; optional for pull's standard fields |
 | `--input` | `inputFile` | Preview, remote validation, creation, pull |
 | `--field` | `fields` (list of `alias=value` strings) | Preview, remote validation, creation |
 | `--issue` | `issue` | Import; optional explicit target for pull |
@@ -677,6 +677,42 @@ idempotency or automatic recovery of unknown outcomes.
 
 ### 7. Pull Jira changes back into ticket.json or ticket.yaml
 
+Pull also works for issues created directly in Jira or by another tool. No
+profile is required to download the standard fields: `summary`, `description`,
+`labels`, `priority`, and `components`. Supply the issue key and a destination:
+
+```powershell
+# Create the YAML file and any missing parent directories:
+.\gradlew.bat -p dev-rig jiraPull --connection=example --issue=APP-42 --input=jira/tickets/APP-42.yaml
+
+# Preview without creating the ticket file or its parent directories:
+.\gradlew.bat -p dev-rig jiraPull --connection=example --issue=APP-42 --input=jira/tickets/APP-42.yaml --preview
+
+# Refresh an existing file without prompting:
+.\gradlew.bat -p dev-rig jiraPull --connection=example --issue=APP-42 --input=jira/tickets/APP-42.yaml --overwrite
+
+& $jiraMarkCli pull --connection example --issue APP-42 --input dev-rig/jira/tickets/APP-42.yaml
+```
+
+If `jira.connection` is configured, omit `--connection`. Pull creates only the
+local file; it never creates an issue in Jira. New files do not need overwrite
+approval or a backup. Existing files require confirmation or `--overwrite`,
+and their original contents are backed up before replacement. A missing file
+requires an explicit `--issue`, even if old local history exists.
+
+For custom fields, aliases, or project/type restrictions, select a profile with
+`--ticket-profile=backend-bug` (CLI: `--profile backend-bug`). Use the exact
+`profile:` name from its YAML header, not the Markdown filename or a file path.
+Pull never guesses a profile from the issue key, filename, or available profiles.
+A task-level `profile` configured in `build.gradle` still applies when the option
+is omitted. To use standard fields instead, leave that task property unset.
+
+Standard-field pulls do not need a profiles directory. Their issue bindings are
+separate from profile-based bindings; keep using the same mode when refreshing
+a file. Switching modes requires an explicit issue key on the first pull in the
+new mode. Use the matching profile when refreshing files with custom aliases,
+and when binding an existing issue for subsequent `jiraCreate` updates.
+
 If someone edits a published issue in Jira, pull its current values into the
 same input file. Select the same connection, profile, input path, and history
 directory used for publication. The recorded issue key is selected automatically:
@@ -711,7 +747,8 @@ profile's project and issue type. Missing, moved, or unavailable fields fail
 without replacing local values. Unresolved publication records still require
 reconciliation before pulling.
 
-The input file must already exist and use `.json`, `.yaml`, or `.yml`. Pull
+The input file must use `.json`, `.yaml`, or `.yml`; missing files are created
+after the response has been validated. With a profile, pull
 fetches only the selected profile's Jira fields and maps their IDs back to local
 aliases, including custom-field aliases. Reference objects are normalized to
 `{"id":"..."}`. Explicit remote nulls are written as nulls to suppress profile
@@ -726,8 +763,8 @@ to approve or `--dry-run` (CLI)/`--preview` (Gradle) to inspect. Cancellation
 leaves the input file unchanged. This is an explicit refresh from Jira, not a
 three-way merge of local and remote edits.
 
-Before writing, the command validates the full candidate and saves an exact
-backup of the original file under the history directory's `backups/` folder.
+Before replacing an existing file, the command validates the full candidate and
+saves an exact backup under the history directory's `backups/` folder.
 The result lists the backup path and changed aliases, without logging field
 values. It replaces the input atomically where supported and aborts if the
 file changes while confirmation is pending. No differences means no input
@@ -831,7 +868,8 @@ text encoding, creation, and non-retry behavior.
 Repeat-publication tests cover file identity, create/update/cancel choices,
 local locking, unresolved outcomes, Cloud/Data Center edit encoding, and
 configuration-cache reuse with the Gradle console service.
-Pull tests cover JSON/YAML round trips, aliases, nulls, backups, preview and
+Pull tests cover new file and parent-directory creation, standard-field pulls
+without profiles, JSON/YAML round trips, aliases, nulls, backups, preview and
 confirmation, local edits during a pull, history binding, Cloud/Data Center
 read-only requests, safe ADF conversion, and configuration-cache reuse.
 Remote behavior has not been verified against a

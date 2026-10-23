@@ -107,7 +107,15 @@ class JiraRemoteFunctionalTest {
                             "issuetype",
                             Map.of("id", "2", "name", "Bug"),
                             "summary",
-                            remoteSummary)));
+                            remoteSummary,
+                            "description",
+                            "Remote details",
+                            "labels",
+                            List.of(),
+                            "priority",
+                            Map.of("id", "3"),
+                            "components",
+                            List.of())));
           } else if (path.endsWith("/editmeta")) {
             response =
                 "{\"fields\":{\"summary\":{\"schema\":{\"type\":\"string\"},\"required\":true,\"operations\":[\"set\"]}}}";
@@ -497,6 +505,56 @@ class JiraRemoteFunctionalTest {
     updating.set(updating.size() - 1, "--on-existing=create");
     runner(CREDENTIAL, updating.toArray(String[]::new)).build();
     assertEquals(2, posts.get());
+  }
+
+  @Test
+  void pullCreatesMissingFilesWithoutProfileAndReusesConfigurationCache() throws Exception {
+    Files.delete(project.resolve("jira/profiles/bug.md"));
+    Files.delete(project.resolve("jira/profiles"));
+    String[] args = {
+      "jiraPull",
+      "--connection=test",
+      "--issue=APP-42",
+      "--input=jira/tickets/new.yaml",
+      "--configuration-cache"
+    };
+    var first = runner(CREDENTIAL, args).build();
+    assertTrue(first.getOutput().contains("\"written\":true"));
+    assertFalse(first.getOutput().contains("\"backup\""));
+    Path input = project.resolve("jira/tickets/new.yaml");
+    assertTrue(Files.readString(input).contains(remoteSummary));
+    assertFalse(Files.exists(project.resolve("jira/profiles")));
+    assertTrue(
+        runner(CREDENTIAL, args).build().getOutput().contains("Reusing configuration cache."));
+    remoteSummary = "Another remote edit";
+    assertTrue(runner(CREDENTIAL, args).buildAndFail().getOutput().contains("CANCELLED"));
+    var overwrite = new ArrayList<>(List.of(args));
+    overwrite.add("--overwrite");
+    assertTrue(
+        runner(CREDENTIAL, overwrite.toArray(String[]::new))
+            .build()
+            .getOutput()
+            .contains("backup"));
+    assertTrue(Files.readString(input).contains(remoteSummary));
+    assertEquals(0, posts.get());
+    assertEquals(0, updates.get());
+  }
+
+  @Test
+  void pullWithExplicitProfileAlsoCreatesMissingInput() {
+    var result =
+        runner(
+                CREDENTIAL,
+                "jiraPull",
+                "--connection=test",
+                "--ticket-profile=bug",
+                "--issue=APP-42",
+                "--input=jira/tickets/profiled.json")
+            .build();
+    assertTrue(result.getOutput().contains("\"written\":true"));
+    assertTrue(Files.exists(project.resolve("jira/tickets/profiled.json")));
+    assertEquals(0, posts.get());
+    assertEquals(0, updates.get());
   }
 
   @Test

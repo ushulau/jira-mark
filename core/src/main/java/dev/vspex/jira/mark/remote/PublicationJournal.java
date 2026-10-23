@@ -46,14 +46,14 @@ final class PublicationJournal implements AutoCloseable {
     String source =
         inputFile == null
             ? "content:" + digest(Json.write(canonical(draft)))
-            : "file:" + inputFile.toRealPath();
+            : "file:" + canonicalPath(inputFile);
     String identity =
         digest(
             Json.write(
                 List.of(
                     gateway.publicationScope(),
                     connection.toLowerCase(java.util.Locale.ROOT),
-                    profilesDirectory.toRealPath().toString(),
+                    canonicalPath(profilesDirectory).toString(),
                     profile.name(),
                     profile.project(),
                     profile.issueType(),
@@ -78,6 +78,17 @@ final class PublicationJournal implements AutoCloseable {
       channel.close();
       throw failure;
     }
+  }
+
+  /** Resolves existing ancestors so a new file keeps the same identity after creation. */
+  static Path canonicalPath(Path path) throws IOException {
+    Path absolute = path.toAbsolutePath().normalize();
+    if (Files.exists(absolute, java.nio.file.LinkOption.NOFOLLOW_LINKS))
+      return absolute.toRealPath();
+    Path parent = absolute.getParent();
+    return parent == null
+        ? absolute.toRealPath()
+        : canonicalPath(parent).resolve(absolute.getFileName());
   }
 
   Entry confirmedEntry() throws IOException {

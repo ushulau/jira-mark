@@ -97,12 +97,12 @@ public abstract class JiraRemoteTask extends DefaultTask {
       description = "Pull only: approve replacing local values without prompting")
   public abstract Property<Boolean> getOverwrite();
 
-  /** {@return the exact active profile name, or the new draft profile name when importing} */
+  /** {@return the exact profile name; optional for pull's standard fields} */
   @Optional
   @Input
   @Option(
       option = "ticket-profile",
-      description = "Exact profile name; for import, the name to assign to the new draft")
+      description = "Exact profile name, not a path; optional for pull's standard fields")
   public abstract Property<String> getProfile();
 
   /** {@return ordered field overrides for validation or creation} */
@@ -121,7 +121,7 @@ public abstract class JiraRemoteTask extends DefaultTask {
 
   /** {@return the YAML or JSON ticket input; required for pull} */
   @Internal
-  @Option(option = "input", description = "YAML/JSON alias values")
+  @Option(option = "input", description = "YAML/JSON alias values; pull can create a missing file")
   public abstract RegularFileProperty getInputFile();
 
   /** {@return the source issue key for import or the optional explicit target for pull} */
@@ -163,7 +163,7 @@ public abstract class JiraRemoteTask extends DefaultTask {
       boolean pulling = operation.equals("pull");
       // Validate required options here so errors name the CLI option rather than the Java property.
       String profile = getProfile().getOrNull();
-      if (profile == null || profile.isBlank()) {
+      if (!pulling && (profile == null || profile.isBlank())) {
         throw new ProfileException(
             (importing
                     ? "Import requires --ticket-profile=<name> for the new draft profile"
@@ -223,7 +223,10 @@ public abstract class JiraRemoteTask extends DefaultTask {
                         result.reviewNotes())));
         return;
       }
-      var selectedProfile = ProfileRepository.select(profiles, profile);
+      var selectedProfile =
+          pulling && (profile == null || profile.isBlank())
+              ? null
+              : ProfileRepository.select(profiles, profile);
       if (pulling) {
         var result =
             new TicketPuller(gateway, new CloudFieldDecoder())

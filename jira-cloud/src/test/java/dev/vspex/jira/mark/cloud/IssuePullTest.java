@@ -115,6 +115,56 @@ class IssuePullTest {
 
   @ParameterizedTest
   @EnumSource(CloudConnection.Deployment.class)
+  void pullsStandardFieldsWithoutAProfileIntoANewFile(CloudConnection.Deployment deployment)
+      throws Exception {
+    var gateway = gateway(deployment, false, false);
+    Path profiles = directory.resolve("no-profiles");
+    Path input = directory.resolve("tickets/nested/new.yaml");
+    var puller = new TicketPuller(gateway, new CloudFieldDecoder());
+    var result =
+        puller.pull(
+            directory.resolve("history"),
+            "example",
+            profiles,
+            null,
+            input,
+            "APP-42",
+            false,
+            false,
+            preview -> fail("No existing file to overwrite"));
+    assertTrue(result.written());
+    assertNull(result.backup());
+    assertFalse(Files.exists(profiles));
+    var pulled = ProfileLoader.readInput(input);
+    assertEquals(
+        java.util.Set.of("summary", "description", "labels", "priority", "components"),
+        pulled.keySet());
+    assertEquals("Remote summary", pulled.get("summary"));
+    assertEquals(
+        deployment == CloudConnection.Deployment.DATA_CENTER
+            ? "h2. Changed\n* wiki text"
+            : "Changed",
+        pulled.get("description"));
+    assertEquals(Map.of("id", "3"), pulled.get("priority"));
+    assertEquals(List.of(Map.of("id", "7")), pulled.get("components"));
+    assertFalse(
+        puller
+            .pull(
+                directory.resolve("history"),
+                "example",
+                profiles,
+                null,
+                input,
+                null,
+                false,
+                false,
+                preview -> fail("No changes"))
+            .written());
+    assertEquals(0, mutations.get());
+  }
+
+  @ParameterizedTest
+  @EnumSource(CloudConnection.Deployment.class)
   void readsOnlyConfiguredFieldsAndConvertsReferencesAliasesAndText(
       CloudConnection.Deployment deployment) throws Exception {
     var gateway = gateway(deployment, false, false);

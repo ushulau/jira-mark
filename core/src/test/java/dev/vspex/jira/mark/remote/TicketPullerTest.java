@@ -54,6 +54,70 @@ class TicketPullerTest {
   }
 
   @Test
+  void missingInputNeedsExplicitIssueAndCreatesNoDirectoriesOnFailure() throws Exception {
+    input = directory.resolve("tickets/nested/new.yaml");
+    var failure =
+        assertThrows(ProfileException.class, () -> pull(null, false, true, request -> true));
+    assertTrue(failure.getMessage().contains("--issue"));
+    assertEquals(0, gateway.reads);
+    assertFalse(Files.exists(input.getParent()));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"json", "yaml", "yml"})
+  void createsMissingInputAndParentsWithoutPromptOrBackupAndKeepsBinding(String extension)
+      throws Exception {
+    input = directory.resolve("tickets/nested/new." + extension);
+    var preview = pull("APP-42", true, false, request -> fail("Preview never prompts"));
+    assertFalse(preview.written());
+    assertFalse(Files.exists(input.getParent()));
+    var result = pull("APP-42", false, false, request -> fail("New files never overwrite"));
+    assertTrue(result.written());
+    assertNull(result.backup());
+    assertFalse(Files.exists(history.resolve("backups")));
+    assertEquals("Remote", ProfileLoader.readInput(input).get("summary"));
+    assertFalse(
+        pull(null, false, false, request -> fail("Binding must survive creation")).written());
+    assertEquals(0, gateway.creates);
+    assertEquals(0, gateway.updates);
+  }
+
+  @Test
+  void concurrentCreatorIsNeverOverwritten() throws Exception {
+    input = directory.resolve("tickets/new.yaml");
+    gateway.onRead =
+        () -> {
+          try {
+            Files.createDirectories(input.getParent());
+            Files.writeString(input, "summary: Concurrent local edit\n");
+          } catch (Exception failure) {
+            throw new AssertionError(failure);
+          }
+        };
+    assertThrows(ProfileException.class, () -> pull("APP-42", false, true, request -> true));
+    assertEquals("Concurrent local edit", ProfileLoader.readInput(input).get("summary"));
+    assertFalse(Files.exists(history.resolve("backups")));
+  }
+
+  @Test
+  void failedRemoteValidationDoesNotCreateFileOrParents() throws Exception {
+    input = directory.resolve("tickets/nested/new.yaml");
+    gateway.project = "OTHER";
+    assertThrows(JiraFailure.class, () -> pull("APP-42", false, true, request -> true));
+    assertFalse(Files.exists(input.getParent()));
+  }
+
+  @Test
+  void rejectsDirectoriesWithAnActionablePathError() throws Exception {
+    input = Files.createDirectories(directory.resolve("ticket.yaml"));
+    var failure =
+        assertThrows(ProfileException.class, () -> pull("APP-42", false, true, request -> true));
+    assertTrue(failure.getMessage().contains("regular file"));
+    assertTrue(failure.getMessage().contains(input.toString()));
+    assertEquals(0, gateway.reads);
+  }
+
+  @Test
   void usesRecordedIssuePreservesBackupMapsAliasesAndNeverWritesToJira() throws Exception {
     new TicketPublisher(gateway, (field, value, alias) -> value)
         .publish(
@@ -215,9 +279,11 @@ class TicketPullerTest {
     String summary = "Remote";
     String remoteDescription = "Remote details";
     boolean omitDescription, uncertain;
+    Runnable onRead = () -> {};
 
     public IssueSnapshot readIssue(String key, Set<String> ids) {
       reads++;
+      onRead.run();
       assertEquals(Set.of("summary", "description"), ids);
       var fields = new LinkedHashMap<String, Object>();
       fields.put("summary", summary);
