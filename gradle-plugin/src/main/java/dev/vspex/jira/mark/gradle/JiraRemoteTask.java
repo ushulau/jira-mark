@@ -48,7 +48,7 @@ public abstract class JiraRemoteTask extends DefaultTask {
     getOverwrite().convention(false);
   }
 
-  /** {@return the plugin-selected operation: import, validate, create, or pull} */
+  /** {@return the plugin-selected operation: import, validate, create, update, or pull} */
   @Input
   public abstract Property<String> getOperation();
 
@@ -97,12 +97,12 @@ public abstract class JiraRemoteTask extends DefaultTask {
       description = "Pull only: approve replacing local values without prompting")
   public abstract Property<Boolean> getOverwrite();
 
-  /** {@return the exact profile name; optional for pull's standard fields} */
+  /** {@return the exact profile name; optional for pull/update standard fields} */
   @Optional
   @Input
   @Option(
       option = "ticket-profile",
-      description = "Exact profile name, not a path; optional for pull's standard fields")
+      description = "Exact profile name, not a path; optional for pull/update standard fields")
   public abstract Property<String> getProfile();
 
   /** {@return ordered field overrides for validation or creation} */
@@ -124,10 +124,12 @@ public abstract class JiraRemoteTask extends DefaultTask {
   @Option(option = "input", description = "YAML/JSON alias values; pull can create a missing file")
   public abstract RegularFileProperty getInputFile();
 
-  /** {@return the source issue key for import or the optional explicit target for pull} */
+  /**
+   * {@return the source issue key for import or the optional explicit target for pull or update}
+   */
   @Optional
   @Input
-  @Option(option = "issue", description = "Import source issue key or explicit pull target")
+  @Option(option = "issue", description = "Import source issue key or explicit pull/update target")
   public abstract Property<String> getIssue();
 
   /**
@@ -156,14 +158,15 @@ public abstract class JiraRemoteTask extends DefaultTask {
   public void executeRemote() {
     try {
       String operation = getOperation().get();
-      if (!List.of("import", "validate", "create", "pull").contains(operation)) {
+      if (!List.of("import", "validate", "create", "update", "pull").contains(operation)) {
         throw new ProfileException("Invalid remote operation");
       }
       boolean importing = operation.equals("import");
       boolean pulling = operation.equals("pull");
+      boolean updating = operation.equals("update");
       // Validate required options here so errors name the CLI option rather than the Java property.
       String profile = getProfile().getOrNull();
-      if (!pulling && (profile == null || profile.isBlank())) {
+      if (!pulling && !updating && (profile == null || profile.isBlank())) {
         throw new ProfileException(
             (importing
                     ? "Import requires --ticket-profile=<name> for the new draft profile"
@@ -182,11 +185,11 @@ public abstract class JiraRemoteTask extends DefaultTask {
         throw new ProfileException("Import does not accept ticket input or field values");
       }
       if (!importing
-          && (!pulling && getIssue().isPresent()
+          && (!pulling && !updating && getIssue().isPresent()
               || getOutputFile().isPresent()
               || !getReuseDefaults().get().isEmpty())) {
         throw new ProfileException(
-            "Output and reuse-default options require import; issue is only supported by import and pull");
+            "Output and reuse-default options require import; issue is only supported by import, update, and pull");
       }
       if (pulling && (!getInputFile().isPresent() || !getFields().get().isEmpty())) {
         throw new ProfileException("Pull requires --input and does not accept --field overrides");
@@ -224,7 +227,7 @@ public abstract class JiraRemoteTask extends DefaultTask {
         return;
       }
       var selectedProfile =
-          pulling && (profile == null || profile.isBlank())
+          (pulling || updating) && (profile == null || profile.isBlank())
               ? null
               : ProfileRepository.select(profiles, profile);
       if (pulling) {
@@ -261,6 +264,22 @@ public abstract class JiraRemoteTask extends DefaultTask {
           getInputFile().isPresent()
               ? ProfileLoader.readInput(getInputFile().get().getAsFile().toPath())
               : Map.<String, Object>of();
+      if (updating) {
+        var updated =
+            new TicketPublisher(gateway, new CloudFieldEncoder())
+                .update(
+                    getPublicationHistoryDir().get().getAsFile().toPath(),
+                    connection,
+                    profiles,
+                    selectedProfile,
+                    getInputFile().isPresent() ? getInputFile().get().getAsFile().toPath() : null,
+                    input,
+                    getFields().get(),
+                    getIssue().getOrNull());
+        getLogger()
+            .lifecycle(Json.write(Map.of("key", updated.key(), "url", updated.url().toString())));
+        return;
+      }
       var workflow = new JiraWorkflow(gateway, new CloudFieldEncoder());
       if (operation.equals("validate")) {
         workflow.validate(selectedProfile, input, getFields().get());

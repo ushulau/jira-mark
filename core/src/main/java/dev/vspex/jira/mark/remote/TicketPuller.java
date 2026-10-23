@@ -228,7 +228,7 @@ public final class TicketPuller {
     }
   }
 
-  private static Profile standardProfile() {
+  static Profile standardProfile() {
     var fields = new LinkedHashMap<String, FieldDefinition>();
     fields.put("summary", new FieldDefinition("summary", "string", true, null, List.of()));
     fields.put("description", new FieldDefinition("description", "string", false, null, List.of()));

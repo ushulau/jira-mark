@@ -8,7 +8,7 @@ create or update issues, and pull Jira changes back into local ticket files.
 Plugin ID: `dev.vspex.jira-mark`
 
 <!-- jira-mark-version:start -->
-The version is defined in the root `build.gradle` as `version = '0.7.0'`.
+The version is defined in the root `build.gradle` as `version = '0.8.0'`.
 <!-- jira-mark-version:end -->
 
 Both publishing helpers use that version. For local development, use a composite build, Maven
@@ -25,6 +25,7 @@ approved release.
 | Validate ticket values against Jira | `jiraValidateRemote` | `validate-remote` | Read metadata |
 | Import a draft profile from an issue | `jiraImportProfile` | `import` | Read issue and metadata |
 | Create an issue or handle a repeated input | `jiraCreate` | `create` | Read metadata, then explicitly create or update |
+| Update an explicit or locally bound issue | `jiraUpdate` | � | Validate and update; never creates |
 | Pull current issue values into a new or existing ticket file | `jiraPull` | `pull` | Read standard or configured fields; never modifies Jira |
 
 Remote commands require a named connection, supplied as an option or a Gradle
@@ -174,7 +175,7 @@ Publish a development build into your local Maven repository from this repositor
 <!-- jira-mark-version:start -->
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.7.0`) and do not upload to the Plugin
+from the root `build.gradle` (currently `0.8.0`) and do not upload to the Plugin
 Portal.
 <!-- jira-mark-version:end -->
 
@@ -199,7 +200,7 @@ version you published locally:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.7.0'
+    id 'dev.vspex.jira-mark' version '0.8.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -212,7 +213,7 @@ a local checkout or Maven Local:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.7.0'
+    id 'dev.vspex.jira-mark' version '0.8.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -259,17 +260,17 @@ Each Gradle task option has a corresponding configurable property:
 | Task option | build.gradle task property | Tasks |
 | --- | --- | --- |
 | `--connection` | `connection` | Remote tasks; defaults to `jira.connection` when configured |
-| `--ticket-profile` | `profile` | Preview and remote tasks; optional for pull's standard fields |
-| `--input` | `inputFile` | Preview, remote validation, creation, pull |
-| `--field` | `fields` (list of `alias=value` strings) | Preview, remote validation, creation |
-| `--issue` | `issue` | Import; optional explicit target for pull |
+| `--ticket-profile` | `profile` | Preview and remote tasks; optional for pull/update standard fields |
+| `--input` | `inputFile` | Preview, remote validation, creation, update, pull |
+| `--field` | `fields` (list of `alias=value` strings) | Preview, remote validation, creation, update |
+| `--issue` | `issue` | Import; optional explicit target for pull/update |
 | `--output` | `outputFile` | Import; preview also exposes `outputFile` through build configuration |
 | `--reuse-default` | `reuseDefaults` (list of Jira field IDs) | Import |
 | `--on-existing` | `onExisting` (`ask`, `create`, `update`, `cancel`) | `jiraCreate`; default `ask` |
 | `--preview` | `dryRun` (boolean) | `jiraPull`; fetch and compare fields without writing |
 | `--overwrite` | `overwrite` (boolean) | `jiraPull`; approve replacing differing local values |
 
-`jiraCreate` and `jiraPull` also expose `publicationHistoryDir` in build configuration. Its
+`jiraCreate`, `jiraUpdate`, and `jiraPull` also expose `publicationHistoryDir` in build configuration. Its
 default is `.gradle/jira-mark/publications` relative to the consumer project.
 
 For example, configure an import separately from ticket validation:
@@ -656,6 +657,35 @@ Issues published before this feature or created through another tool are not
 automatically recognized; an approved `jiraPull --issue=<key>` can bind one
 explicitly. Choosing create on a repeat records the newly created
 issue as the target for subsequent updates.
+
+For updates, prefer the dedicated Gradle task:
+
+```powershell
+# Explicit target: works even without matching local history
+.\gradlew.bat jiraUpdate --connection=example --issue=APP-42 --input=jira/tickets/APP-42.yaml
+
+# After a pull or update with the same connection, profile mode, and path
+.\gradlew.bat jiraUpdate --connection=example --input=jira/tickets/APP-42.yaml
+
+# Use a profile for custom fields and aliases
+.\gradlew.bat jiraUpdate --connection=example --ticket-profile=backend-bug --issue=APP-42 --input=ticket.json
+```
+
+`jiraUpdate` never creates an issue. Without a profile it uses the same standard
+field mapping and binding as a profileless pull. A configured task `profile` still
+applies; configure the same profile on pull and update when using custom fields.
+An explicit target conflicting with an existing binding fails; pull the intended
+issue into a separate file to bind it deliberately. Filenames never select issue
+keys. Multiple files pulled from the same issue all refer to that issue, regardless
+of their filenames.
+
+`jiraCreate --on-existing=update` now fails if no matching publication record
+exists. Previously it created a new issue in that case because the policy applied
+only after finding a record. This could happen after a profileless pull followed
+by a create with a configured profile, or after a change of path, connection,
+history directory, or profile. Use `jiraUpdate --issue=<key>` when the history does
+not match. The CLI `create --on-existing update` also fails without a record.
+There is currently no separate CLI update command.
 
 An update reads the issue's edit metadata and validates the current effective
 input, including profile defaults and field overrides. It replaces only those

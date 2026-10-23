@@ -116,6 +116,11 @@ class JiraRemoteFunctionalTest {
                             Map.of("id", "3"),
                             "components",
                             List.of())));
+          } else if (path.equals("/rest/api/3/issue/APP-42")
+              && exchange.getRequestURI().getQuery() != null
+              && exchange.getRequestURI().getQuery().contains("issuetype")) {
+            response =
+                "{\"key\":\"APP-42\",\"fields\":{\"project\":{\"id\":\"100\",\"key\":\"APP\"},\"issuetype\":{\"id\":\"2\",\"name\":\"Bug\"}}}";
           } else if (path.endsWith("/editmeta")) {
             response =
                 "{\"fields\":{\"summary\":{\"schema\":{\"type\":\"string\"},\"required\":true,\"operations\":[\"set\"]}}}";
@@ -538,6 +543,37 @@ class JiraRemoteFunctionalTest {
     assertTrue(Files.readString(input).contains(remoteSummary));
     assertEquals(0, posts.get());
     assertEquals(0, updates.get());
+  }
+
+  @Test
+  void explicitUpdateAndProfilelessPullBindingNeverCreate() throws Exception {
+    Files.writeString(project.resolve("ticket.json"), "{\"summary\":\"Edited\"}");
+    var failed =
+        runner(
+                CREDENTIAL,
+                "jiraCreate",
+                "--connection=test",
+                "--ticket-profile=bug",
+                "--input=ticket.json",
+                "--on-existing=update")
+            .buildAndFail();
+    assertTrue(failed.getOutput().contains("No matching publication record"));
+    String[] explicit = {
+      "jiraUpdate",
+      "--connection=test",
+      "--input=ticket.json",
+      "--issue=APP-42",
+      "--configuration-cache"
+    };
+    runner(CREDENTIAL, explicit).build();
+    assertTrue(
+        runner(CREDENTIAL, explicit).build().getOutput().contains("Reusing configuration cache."));
+    runner(CREDENTIAL, "jiraPull", "--connection=test", "--issue=APP-42", "--input=pulled.yaml")
+        .build();
+    Files.writeString(project.resolve("pulled.yaml"), "summary: Edited locally\n");
+    runner(CREDENTIAL, "jiraUpdate", "--connection=test", "--input=pulled.yaml").build();
+    assertEquals(0, posts.get());
+    assertEquals(3, updates.get());
   }
 
   @Test

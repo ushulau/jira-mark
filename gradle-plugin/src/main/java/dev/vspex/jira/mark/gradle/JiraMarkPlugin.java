@@ -70,6 +70,12 @@ public final class JiraMarkPlugin implements Plugin<Project> {
     registerRemote(
         project,
         extension,
+        "jiraUpdate",
+        "update",
+        "Updates an explicit or locally bound Jira issue; never creates an issue.");
+    registerRemote(
+        project,
+        extension,
         "jiraPull",
         "pull",
         "Pulls current issue fields into a ticket input file after overwrite approval.");

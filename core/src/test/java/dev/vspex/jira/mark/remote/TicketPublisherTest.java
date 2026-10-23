@@ -69,6 +69,55 @@ class TicketPublisherTest {
   }
 
   @Test
+  void updatePolicyWithoutMatchingHistoryNeverCreates() throws Exception {
+    var failure =
+        assertThrows(
+            dev.vspex.jira.mark.profile.ProfileException.class,
+            () -> publish(Map.of("summary", "Edited"), "update", key -> fail("No prompt")));
+    assertTrue(failure.getMessage().contains("No matching publication record"));
+    assertEquals(0, gateway.creates);
+    assertEquals(0, gateway.updates);
+  }
+
+  @Test
+  void explicitUpdateBindsExistingIssueAndNeverCreates() throws Exception {
+    publisher.update(
+        history,
+        "example",
+        profiles,
+        profile,
+        file,
+        Map.of("summary", "Edited"),
+        List.of(),
+        "APP-42");
+    publisher.update(
+        history,
+        "example",
+        profiles,
+        profile,
+        file,
+        Map.of("summary", "Edited again"),
+        List.of(),
+        null);
+    assertEquals("APP-42", gateway.updatedKey);
+    assertEquals(2, gateway.updates);
+    assertEquals(0, gateway.creates);
+    assertThrows(
+        dev.vspex.jira.mark.profile.ProfileException.class,
+        () ->
+            publisher.update(
+                history,
+                "example",
+                profiles,
+                profile,
+                file,
+                Map.of("summary", "Wrong target"),
+                List.of(),
+                "APP-99"));
+    assertEquals(2, gateway.updates);
+  }
+
+  @Test
   void explicitNewChoiceRecordsTheLatestCreatedIssue() throws Exception {
     publish(Map.of("summary", "Original"), "ask", key -> fail("No repeat"));
     var newer = publish(Map.of("summary", "Changed"), "create", key -> fail("Explicit choice"));
@@ -279,6 +328,10 @@ class TicketPublisherTest {
           "customfield_99",
           new Field("customfield_99", "string", true, false, true, "literal", List.of()));
       return new Metadata(editProject, "2", fields);
+    }
+
+    public IssueSnapshot readIssue(String key, java.util.Set<String> fields) {
+      return new IssueSnapshot(key, "100", "APP", "2", "Bug", Map.of());
     }
 
     public ExampleIssue example(String key) {
