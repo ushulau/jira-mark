@@ -8,7 +8,7 @@ create or update issues, and pull Jira changes back into local ticket files.
 Plugin ID: `dev.vspex.jira-mark`
 
 <!-- jira-mark-version:start -->
-The version is defined in the root `build.gradle` as `version = '0.8.0'`.
+The version is defined in the root `build.gradle` as `version = '0.9.0'`.
 <!-- jira-mark-version:end -->
 
 Both publishing helpers use that version. For local development, use a composite build, Maven
@@ -176,7 +176,7 @@ Publish a development build into your local Maven repository from this repositor
 <!-- jira-mark-version:start -->
 This helper requires `mise`. Without it, run
 `.\gradlew.bat :gradle-plugin:publishToMavenLocal`. Both commands use the version
-from the root `build.gradle` (currently `0.8.0`) and do not upload to the Plugin
+from the root `build.gradle` (currently `0.9.0`) and do not upload to the Plugin
 Portal.
 <!-- jira-mark-version:end -->
 
@@ -201,7 +201,7 @@ version you published locally:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.8.0'
+    id 'dev.vspex.jira-mark' version '0.9.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -214,7 +214,7 @@ a local checkout or Maven Local:
 <!-- jira-mark-version:start -->
 ```groovy
 plugins {
-    id 'dev.vspex.jira-mark' version '0.8.0'
+    id 'dev.vspex.jira-mark' version '0.9.0'
 }
 ```
 <!-- jira-mark-version:end -->
@@ -353,7 +353,7 @@ project and issue type IDs so YAML treats them as strings.
 | `allowedValuesCount` | Informational option count used instead of a long `allowedValues` list |
 | `name` | Informational Jira field name written by imports; never sent to Jira |
 
-Profiles using `name`, object-shaped `allowedValues`, or `allowedValuesCount` require plugin version `0.8.0` or later; older versions reject these keys as unknown.
+Profiles using `name`, object-shaped `allowedValues`, or `allowedValuesCount` require plugin version `0.9.0` or later; older versions reject these keys as unknown.
 
 Supported local types are `string`, `integer`, `number`, `boolean`,
 `string-list`, `object`, and `array`. Every profile must define `summary` as
