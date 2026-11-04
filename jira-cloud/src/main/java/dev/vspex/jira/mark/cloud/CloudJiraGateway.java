@@ -2,6 +2,7 @@ package dev.vspex.jira.mark.cloud;
 
 import static dev.vspex.jira.mark.remote.JiraFailure.Code.*;
 
+import dev.vspex.jira.mark.remote.FieldKind;
 import dev.vspex.jira.mark.remote.JiraFailure;
 import dev.vspex.jira.mark.remote.JiraGateway;
 import java.net.URI;
@@ -190,48 +191,36 @@ public final class CloudJiraGateway implements JiraGateway {
 
   private Field parseField(String id, Map<String, Object> data) {
     var schema = data.get("schema") instanceof Map<?, ?> map ? map : Map.of();
-    String type = String.valueOf(schema.get("type"));
-    String custom = String.valueOf(schema.getOrDefault("custom", null));
-    boolean supportedCustom =
-        !schema.containsKey("custom")
-            || Set.of("textfield", "textarea", "float", "select", "multiselect").stream()
-                .anyMatch(
-                    name ->
-                        custom.equals("com.atlassian.jira.plugin.system.customfieldtypes:" + name));
-    String local = null;
-    String encoding = "unsupported";
-    if (supportedCustom) {
-      switch (type) {
-        case "string" -> {
-          local = "string";
-          encoding =
-              connection.deployment() == CloudConnection.Deployment.CLOUD
+    String type = schema.get("type") instanceof String text ? text : null;
+    String items = schema.get("items") instanceof String text ? text : null;
+    String custom = schema.get("custom") instanceof String text ? text : null;
+    Object name = data.get("name");
+    String fieldName = name instanceof String text && !text.isBlank() ? text : null;
+    FieldKind kind = FieldKind.classify(custom, type, items);
+    boolean cloud = connection.deployment() == CloudConnection.Deployment.CLOUD;
+    String local = kind.profileType();
+    String encoding =
+        switch (kind) {
+          case TEXT ->
+              cloud
                       && (id.equals("description")
                           || id.equals("environment")
-                          || custom.endsWith(":textarea"))
+                          || (custom != null && custom.endsWith(":textarea")))
                   ? "adf"
                   : "literal";
-        }
-        case "number", "integer", "boolean" -> {
-          local = type;
-          encoding = "literal";
-        }
-        case "priority", "option", "component", "version" -> {
-          local = "object";
-          encoding = "reference";
-        }
-        case "array" -> {
-          if ("string".equals(schema.get("items"))) {
-            local = "string-list";
-            encoding = "literal";
-          } else if (Set.of("option", "component", "version")
-              .contains(String.valueOf(schema.get("items")))) {
-            local = "array";
-            encoding = "references";
-          }
-        }
-        default -> {}
-      }
+          case INTEGER, NUMBER, BOOLEAN, LABELS -> "literal";
+          case SELECT, VERSION -> "reference";
+          case MULTISELECT, MULTI_VERSION -> "references";
+          case CASCADING -> "cascading";
+          case DATE -> "date";
+          case DATETIME -> "datetime";
+          case USER -> cloud ? "user-cloud" : "user-dc";
+          case MULTI_USER -> cloud ? "users-cloud" : "users-dc";
+          case EPIC_LINK -> "epic-link";
+          case UNSUPPORTED -> "unsupported";
+        };
+    if (!kind.supported()) {
+      local = null;
     }
     boolean settable =
         data.get("operations") instanceof List<?> operations && operations.contains("set");
@@ -248,12 +237,15 @@ public final class CloudJiraGateway implements JiraGateway {
     }
     return new Field(
         id,
+        fieldName,
+        kind.kind(),
         local,
         Boolean.TRUE.equals(data.get("required")),
         Boolean.TRUE.equals(data.get("hasDefaultValue")),
         settable,
         encoding,
-        choices);
+        choices,
+        custom);
   }
 
   @SuppressWarnings("unchecked")

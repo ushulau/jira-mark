@@ -53,7 +53,7 @@ public final class Main {
     if (args.length == 0 || args[0].equals("--help")) {
       out.println(
           """
-          Usage: jira-mark <profiles|validate|preview|validate-remote|import|create|pull> [options]
+          Usage: jira-mark <profiles|validate|preview|validate-remote|import|create|pull|sync-profile> [options]
             --profiles-dir DIR     default: jira/profiles
             --profile NAME         exact profile name; optional for pull's standard fields
             --input FILE           YAML/JSON mapping; pull creates missing files with --issue
@@ -63,6 +63,13 @@ public final class Main {
             --issue KEY            import source, or explicit pull target when no recorded issue exists
             --output FILE          import destination; default: jira/profile-drafts/<profile>.md
             --reuse-default ID     import only; explicitly reuse a supported field (repeatable)
+            --alias-style STYLE    import only: full or short (default)
+            --max-alias-length N   import only: long-alias review threshold (default 40)
+            --max-allowed-values N import only: option list limit (default 25)
+            --alias-drop-words W   import only: extra short-alias stop word (repeatable)
+            --option-format FMT    pull only: id (default) or label
+            --write-docs           sync-profile only: rewrite the generated docs section
+            --fail-on-drift        sync-profile only: fail when drift is reported
             --interactive          preview/validate-remote/create only; terminal required; :cancel aborts
             --on-existing ACTION   create only: ask (default), create, update, or cancel
             --history-dir DIR      create/pull: default .gradle/jira-mark/publications
@@ -76,20 +83,32 @@ public final class Main {
     }
     try {
       String command = args[0];
-      if (!List.of("profiles", "validate", "preview", "validate-remote", "import", "create", "pull")
+      if (!List.of(
+              "profiles",
+              "validate",
+              "preview",
+              "validate-remote",
+              "import",
+              "create",
+              "pull",
+              "sync-profile")
           .contains(command)) {
         throw new ProfileException("Unknown command; use --help");
       }
       Path directory = Path.of("jira/profiles");
       String profile = null, connection = null, issue = null;
+      String aliasStyle = null, optionFormat = null;
+      String maxAliasLength = null, maxAllowedValues = null;
       Path inputFile = null, output = null;
       Path historyDirectory = Path.of(".gradle/jira-mark/publications");
       String onExisting = "ask";
       var fields = new ArrayList<String>();
       var defaults = new HashSet<String>();
+      var dropWords = new ArrayList<String>();
       var supplied = new HashSet<String>();
       boolean interactive = false;
       boolean dryRun = false, overwrite = false;
+      boolean writeDocs = false, failOnDrift = false;
       for (int i = 1; i < args.length; i++) {
         String option = args[i];
         supplied.add(option);
@@ -105,6 +124,14 @@ public final class Main {
           overwrite = true;
           continue;
         }
+        if (option.equals("--write-docs")) {
+          writeDocs = true;
+          continue;
+        }
+        if (option.equals("--fail-on-drift")) {
+          failOnDrift = true;
+          continue;
+        }
         if (++i >= args.length) {
           throw new ProfileException("Missing option value");
         }
@@ -117,6 +144,11 @@ public final class Main {
           case "--issue" -> issue = args[i];
           case "--output" -> output = Path.of(args[i]);
           case "--reuse-default" -> defaults.add(args[i]);
+          case "--alias-style" -> aliasStyle = args[i];
+          case "--max-alias-length" -> maxAliasLength = args[i];
+          case "--max-allowed-values" -> maxAllowedValues = args[i];
+          case "--alias-drop-words" -> dropWords.add(args[i]);
+          case "--option-format" -> optionFormat = args[i];
           case "--on-existing" -> onExisting = args[i];
           case "--history-dir" -> historyDirectory = Path.of(args[i]);
           default -> throw new ProfileException("Unknown option; use --help");
@@ -134,7 +166,11 @@ public final class Main {
                     "--connection",
                     "--issue",
                     "--output",
-                    "--reuse-default");
+                    "--reuse-default",
+                    "--alias-style",
+                    "--max-alias-length",
+                    "--max-allowed-values",
+                    "--alias-drop-words");
             case "create" ->
                 Set.of(
                     "--profiles-dir",
@@ -154,7 +190,15 @@ public final class Main {
                     "--issue",
                     "--history-dir",
                     "--dry-run",
-                    "--overwrite");
+                    "--overwrite",
+                    "--option-format");
+            case "sync-profile" ->
+                Set.of(
+                    "--profiles-dir",
+                    "--profile",
+                    "--connection",
+                    "--write-docs",
+                    "--fail-on-drift");
             default ->
                 Set.of(
                     "--profiles-dir",
@@ -167,7 +211,8 @@ public final class Main {
       if (!allowed.containsAll(supplied)) {
         throw new ProfileException("Options do not apply to this command; use --help");
       }
-      boolean remote = List.of("validate-remote", "import", "create", "pull").contains(command);
+      boolean remote =
+          List.of("validate-remote", "import", "create", "pull", "sync-profile").contains(command);
       if (remote && (connection == null || connection.isBlank())) {
         throw new ProfileException("--connection is required");
       }
@@ -195,12 +240,48 @@ public final class Main {
           }
           output = Path.of("jira/profile-drafts", profile + ".md");
         }
+        var options =
+            new ProfileImporter.Options(
+                aliasStyle == null ? "short" : aliasStyle,
+                maxAliasLength == null ? 40 : parsePositive(maxAliasLength, "--max-alias-length"),
+                maxAllowedValues == null
+                    ? 25
+                    : parseNonNegative(maxAllowedValues, "--max-allowed-values"),
+                dropWords);
         var result =
-            new ProfileImporter(connections.apply(connection))
+            new ProfileImporter(connections.apply(connection), options)
                 .importProfile(issue, profile, defaults, output, directory);
         out.println(
             Json.write(
                 Map.of("output", result.output().toString(), "reviewNotes", result.reviewNotes())));
+        return 0;
+      }
+      if (command.equals("sync-profile")) {
+        var gateway = connections.apply(connection);
+        var current = ProfileRepository.select(directory, profile);
+        var metadata = gateway.metadata(current.project(), current.issueType());
+        var drift = dev.vspex.jira.mark.remote.ProfileSync.compare(current, metadata);
+        if (writeDocs) {
+          Path file = findProfileFile(directory, profile);
+          String text = java.nio.file.Files.readString(file);
+          java.nio.file.Files.writeString(
+              file,
+              dev.vspex.jira.mark.remote.ProfileSync.rewriteDocs(text, current, metadata, 25));
+        }
+        out.println(
+            Json.write(
+                Map.of(
+                    "drift",
+                    drift.hasDrift(),
+                    "profile",
+                    profile,
+                    "report",
+                    dev.vspex.jira.mark.remote.ProfileSync.formatReport(
+                        profile, metadata.projectId(), metadata.issueTypeId(), drift))));
+        if (failOnDrift && drift.hasDrift()) {
+          throw new JiraFailure(
+              JiraFailure.Code.REMOTE_VALIDATION, "Profile '" + profile + "' has drifted");
+        }
         return 0;
       }
       var selected =
@@ -222,6 +303,7 @@ public final class Main {
                     issue,
                     dryRun,
                     overwrite,
+                    optionFormat == null ? "id" : optionFormat,
                     preview -> InteractiveInput.confirmPull(preview, reader, err));
         out.println(Json.write(result.description()));
         return 0;
@@ -275,5 +357,49 @@ public final class Main {
       err.println(Json.write(Map.of("error", "INVALID_INPUT", "message", message)));
       return 2;
     }
+  }
+
+  private static int parsePositive(String value, String option) {
+    try {
+      int parsed = Integer.parseInt(value);
+      if (parsed < 1) {
+        throw new ProfileException(option + " must be a positive integer");
+      }
+      return parsed;
+    } catch (NumberFormatException failure) {
+      throw new ProfileException(option + " must be a positive integer");
+    }
+  }
+
+  private static int parseNonNegative(String value, String option) {
+    try {
+      int parsed = Integer.parseInt(value);
+      if (parsed < 0) {
+        throw new ProfileException(option + " must be a non-negative integer");
+      }
+      return parsed;
+    } catch (NumberFormatException failure) {
+      throw new ProfileException(option + " must be a non-negative integer");
+    }
+  }
+
+  private static Path findProfileFile(Path directory, String name) throws IOException {
+    try (var files = java.nio.file.Files.list(directory)) {
+      for (Path file :
+          files
+              .filter(java.nio.file.Files::isRegularFile)
+              .filter(p -> p.toString().endsWith(".md"))
+              .sorted()
+              .toList()) {
+        try {
+          if (ProfileLoader.load(file).name().equals(name)) {
+            return file;
+          }
+        } catch (RuntimeException | IOException ignored) {
+          // Keep scanning for a readable match.
+        }
+      }
+    }
+    throw new ProfileException("Unknown profile '" + name + "'");
   }
 }

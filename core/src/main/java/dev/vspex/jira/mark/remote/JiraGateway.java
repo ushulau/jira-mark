@@ -47,18 +47,36 @@ public interface JiraGateway {
 
   record Field(
       String id,
+      String name,
+      String kind,
       String localType,
       boolean required,
       boolean hasDefault,
       boolean settable,
       String encoding,
-      List<Object> choices) {
+      List<Object> choices,
+      String custom) {
     public Field {
-      choices = List.copyOf(choices);
+      choices = List.copyOf(choices == null ? List.of() : choices);
+    }
+
+    public Field(
+        String id,
+        String localType,
+        boolean required,
+        boolean hasDefault,
+        boolean settable,
+        String encoding,
+        List<Object> choices) {
+      this(id, null, null, localType, required, hasDefault, settable, encoding, choices, null);
     }
 
     public boolean supported() {
       return localType != null;
+    }
+
+    public boolean arrayKind() {
+      return "array".equals(localType) || "string-list".equals(localType);
     }
   }
 

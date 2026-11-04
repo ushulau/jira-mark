@@ -43,9 +43,12 @@ public abstract class JiraRemoteTask extends DefaultTask {
         "Remote state and credentials must not be captured in Gradle execution history");
     getFields().convention(List.of());
     getReuseDefaults().convention(List.of());
+    getAliasDropWords().convention(List.of());
     getOnExisting().convention("ask");
     getDryRun().convention(false);
     getOverwrite().convention(false);
+    getWriteDocs().convention(false);
+    getFailOnDrift().convention(false);
   }
 
   /** {@return the plugin-selected operation: import, validate, create, update, or pull} */
@@ -139,6 +142,54 @@ public abstract class JiraRemoteTask extends DefaultTask {
   @Option(option = "output", description = "Import draft file outside active profiles")
   public abstract RegularFileProperty getOutputFile();
 
+  /** {@return the alias style for import: full or short} */
+  @Optional
+  @Input
+  @Option(option = "alias-style", description = "Import only: full or short (default)")
+  public abstract Property<String> getAliasStyle();
+
+  /** {@return the maximum alias length before a review note; long aliases are kept} */
+  @Optional
+  @Input
+  @Option(option = "max-alias-length", description = "Import only: long-alias review threshold")
+  public abstract Property<Integer> getMaxAliasLength();
+
+  /** {@return how many option values are written before using allowedValuesCount} */
+  @Optional
+  @Input
+  @Option(option = "max-allowed-values", description = "Import only: option list limit")
+  public abstract Property<Integer> getMaxAllowedValues();
+
+  /** {@return extra stop words removed by short aliases} */
+  @Input
+  public abstract ListProperty<String> getAliasDropWords();
+
+  /**
+   * Sets extra stop words for short aliases.
+   *
+   * @param words words to drop in addition to the default stop words; repeatable
+   */
+  @Option(option = "alias-drop-words", description = "Import only: extra short-alias stop words")
+  public void setAliasDropWordsArguments(List<String> words) {
+    getAliasDropWords().set(words);
+  }
+
+  /** {@return pulled option format: id (default) or label} */
+  @Optional
+  @Input
+  @Option(option = "option-format", description = "Pull only: id (default) or label")
+  public abstract Property<String> getOptionFormat();
+
+  /** {@return whether sync rewrites only the generated docs section} */
+  @Input
+  @Option(option = "write-docs", description = "Sync only: rewrite the generated docs section")
+  public abstract Property<Boolean> getWriteDocs();
+
+  /** {@return whether sync exits non-zero when drift is reported} */
+  @Input
+  @Option(option = "fail-on-drift", description = "Sync only: fail when drift is reported")
+  public abstract Property<Boolean> getFailOnDrift();
+
   /** {@return the supported Jira field IDs whose values should become imported defaults} */
   @Input
   public abstract ListProperty<String> getReuseDefaults();
@@ -158,12 +209,13 @@ public abstract class JiraRemoteTask extends DefaultTask {
   public void executeRemote() {
     try {
       String operation = getOperation().get();
-      if (!List.of("import", "validate", "create", "update", "pull").contains(operation)) {
+      if (!List.of("import", "validate", "create", "update", "pull", "sync").contains(operation)) {
         throw new ProfileException("Invalid remote operation");
       }
       boolean importing = operation.equals("import");
       boolean pulling = operation.equals("pull");
       boolean updating = operation.equals("update");
+      boolean syncing = operation.equals("sync");
       // Validate required options here so errors name the CLI option rather than the Java property.
       String profile = getProfile().getOrNull();
       if (!pulling && !updating && (profile == null || profile.isBlank())) {
@@ -185,7 +237,7 @@ public abstract class JiraRemoteTask extends DefaultTask {
         throw new ProfileException("Import does not accept ticket input or field values");
       }
       if (!importing
-          && (!pulling && !updating && getIssue().isPresent()
+          && (!pulling && !updating && !syncing && getIssue().isPresent()
               || getOutputFile().isPresent()
               || !getReuseDefaults().get().isEmpty())) {
         throw new ProfileException(
@@ -200,6 +252,24 @@ public abstract class JiraRemoteTask extends DefaultTask {
       if (!operation.equals("create") && !getOnExisting().get().equals("ask")) {
         throw new ProfileException("--on-existing applies only to jiraCreate");
       }
+      if (!importing
+          && (getAliasStyle().isPresent()
+              || getMaxAliasLength().isPresent()
+              || getMaxAllowedValues().isPresent()
+              || !getAliasDropWords().get().isEmpty())) {
+        throw new ProfileException(
+            "--alias-style and alias limits apply only to jiraImportProfile");
+      }
+      if (!pulling && getOptionFormat().isPresent()) {
+        throw new ProfileException("--option-format applies only to jiraPull");
+      }
+      if (!syncing && (getWriteDocs().get() || getFailOnDrift().get())) {
+        throw new ProfileException(
+            "--write-docs and --fail-on-drift apply only to jiraSyncProfile");
+      }
+      if (syncing && (getInputFile().isPresent() || !getFields().get().isEmpty())) {
+        throw new ProfileException("Sync does not accept ticket input or field values");
+      }
       var gateway =
           new CloudJiraGateway(
               CloudConnection.fromConfiguration(
@@ -208,8 +278,14 @@ public abstract class JiraRemoteTask extends DefaultTask {
                   System::getenv));
       Path profiles = getProfilesDir().get().getAsFile().toPath();
       if (importing) {
+        var options =
+            new ProfileImporter.Options(
+                getAliasStyle().getOrElse("short"),
+                getMaxAliasLength().getOrElse(40),
+                getMaxAllowedValues().getOrElse(25),
+                getAliasDropWords().get());
         var result =
-            new ProfileImporter(gateway)
+            new ProfileImporter(gateway, options)
                 .importProfile(
                     getIssue().get(),
                     profile,
@@ -230,6 +306,30 @@ public abstract class JiraRemoteTask extends DefaultTask {
           (pulling || updating) && (profile == null || profile.isBlank())
               ? null
               : ProfileRepository.select(profiles, profile);
+      if (syncing) {
+        var metadata = gateway.metadata(selectedProfile.project(), selectedProfile.issueType());
+        var drift = dev.vspex.jira.mark.remote.ProfileSync.compare(selectedProfile, metadata);
+        getLogger()
+            .lifecycle(
+                dev.vspex.jira.mark.remote.ProfileSync.formatReport(
+                    selectedProfile.name(), metadata.projectId(), metadata.issueTypeId(), drift));
+        if (getWriteDocs().get()) {
+          Path file = findProfileFile(profiles, selectedProfile.name());
+          String current = java.nio.file.Files.readString(file);
+          String updated =
+              dev.vspex.jira.mark.remote.ProfileSync.rewriteDocs(
+                  current, selectedProfile, metadata, 25);
+          java.nio.file.Files.writeString(file, updated);
+          getLogger().lifecycle("Rewrote generated docs in {}", file);
+        }
+        if (getFailOnDrift().get() && drift.hasDrift()) {
+          throw new GradleException("DRIFT: profile '" + selectedProfile.name() + "' has drifted");
+        }
+        getLogger()
+            .lifecycle(
+                Json.write(Map.of("drift", drift.hasDrift(), "profile", selectedProfile.name())));
+        return;
+      }
       if (pulling) {
         var result =
             new TicketPuller(gateway, new CloudFieldDecoder())
@@ -242,6 +342,7 @@ public abstract class JiraRemoteTask extends DefaultTask {
                     getIssue().getOrNull(),
                     getDryRun().get(),
                     getOverwrite().get(),
+                    getOptionFormat().getOrElse("id"),
                     preview ->
                         getUserInputHandler()
                             .askUser(
@@ -323,5 +424,26 @@ public abstract class JiraRemoteTask extends DefaultTask {
                   ? failure.getMessage()
                   : "Cannot read the requested path or input"));
     }
+  }
+
+  private static Path findProfileFile(Path profiles, String name) throws IOException {
+    try (var files = java.nio.file.Files.list(profiles)) {
+      for (Path file :
+          files
+              .filter(java.nio.file.Files::isRegularFile)
+              .filter(p -> p.toString().endsWith(".md"))
+              .sorted()
+              .toList()) {
+        try {
+          if (ProfileRepository.select(profiles, name) != null
+              && dev.vspex.jira.mark.profile.ProfileLoader.load(file).name().equals(name)) {
+            return file;
+          }
+        } catch (RuntimeException | IOException ignored) {
+          // Keep scanning for a readable match.
+        }
+      }
+    }
+    throw new ProfileException("Unknown profile '" + name + "'");
   }
 }

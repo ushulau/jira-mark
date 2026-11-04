@@ -79,6 +79,12 @@ public final class JiraMarkPlugin implements Plugin<Project> {
         "jiraPull",
         "pull",
         "Pulls current issue fields into a ticket input file after overwrite approval.");
+    registerRemote(
+        project,
+        extension,
+        "jiraSyncProfile",
+        "sync",
+        "Compares a profile with current Jira metadata without modifying Jira.");
   }
 
   private static void registerRemote(

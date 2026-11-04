@@ -4,6 +4,7 @@ import static dev.vspex.jira.mark.remote.JiraFailure.Code.REMOTE_VALIDATION;
 
 import dev.vspex.jira.mark.profile.DraftResolver;
 import dev.vspex.jira.mark.profile.Profile;
+import dev.vspex.jira.mark.profile.ProfileException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,9 +44,17 @@ public final class JiraWorkflow {
     return encode(profile, draft, metadata, false);
   }
 
+  @SuppressWarnings("unchecked")
   private Map<String, Object> encode(
       Profile profile, Map<String, Object> draft, JiraGateway.Metadata metadata, boolean creating) {
     var localValues = (Map<?, ?>) draft.get("fields");
+    var cleared =
+        draft.get("clear") instanceof List<?> list
+            ? list.stream().filter(String.class::isInstance).map(String.class::cast).toList()
+            : List.<String>of();
+    if (creating && !cleared.isEmpty()) {
+      throw new ProfileException("$clear applies only to updates; nothing was sent");
+    }
     Map<String, Object> fields = new LinkedHashMap<>();
     if (creating) {
       fields.put("project", Map.of("id", metadata.projectId()));
@@ -55,8 +64,27 @@ public final class JiraWorkflow {
         .fields()
         .forEach(
             (alias, definition) -> {
+              boolean isCleared = cleared.contains(alias);
               Object value = localValues.get(definition.id());
-              if (!creating && value == null) {
+              boolean present = localValues.containsKey(definition.id());
+              if (isCleared) {
+                var remote = metadata.fields().get(definition.id());
+                if (remote == null || !remote.settable()) {
+                  throw new JiraFailure(
+                      REMOTE_VALIDATION,
+                      "Field '"
+                          + alias
+                          + "' is unavailable for "
+                          + (creating ? "creation" : "editing"));
+                }
+                if (remote.required()) {
+                  throw new JiraFailure(
+                      REMOTE_VALIDATION, "Field '" + alias + "' is required and cannot be cleared");
+                }
+                fields.put(definition.id(), definition.arrayKind() ? List.of() : null);
+                return;
+              }
+              if (!creating && (!present || value == null)) {
                 return;
               }
               var remote = metadata.fields().get(definition.id());
@@ -73,7 +101,13 @@ public final class JiraWorkflow {
                     REMOTE_VALIDATION, "Jira requires a nonempty field '" + alias + "'");
               }
               if (value != null) {
-                fields.put(definition.id(), encoder.encode(remote, value, alias));
+                Object resolved = value;
+                if (remote.encoding() != null
+                    && (remote.encoding().equals("reference")
+                        || remote.encoding().equals("references"))) {
+                  resolved = OptionLabels.resolveLive(remote, value, alias);
+                }
+                fields.put(definition.id(), encoder.encode(remote, resolved, alias));
               }
             });
     for (var field : creating ? metadata.fields().values() : List.<JiraGateway.Field>of()) {

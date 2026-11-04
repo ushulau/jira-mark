@@ -249,6 +249,82 @@ class TicketPullerTest {
   }
 
   @Test
+  void labelFormatPullsOptionLabelsInsteadOfIds() throws Exception {
+    var optionFields = new LinkedHashMap<String, FieldDefinition>();
+    optionFields.put("summary", new FieldDefinition("summary", "string", true, null, List.of()));
+    optionFields.put(
+        "urgency",
+        new FieldDefinition(
+            "customfield_10302",
+            "object",
+            false,
+            null,
+            List.of(Map.of("id", "10400", "value", "Normal - Planned"))));
+    var optionProfile = new Profile("bug", "APP", "Bug", optionFields, "");
+    var optionGateway =
+        new FakeGateway() {
+          @Override
+          public IssueSnapshot readIssue(String key, Set<String> ids) {
+            reads++;
+            var fields = new LinkedHashMap<String, Object>();
+            fields.put("summary", "Remote");
+            fields.put("customfield_10302", Map.of("id", "10400"));
+            return new IssueSnapshot(key, "100", "APP", "2", "Bug", fields);
+          }
+
+          @Override
+          public Metadata metadata(String project, String type) {
+            return new Metadata(
+                "100",
+                "2",
+                Map.of(
+                    "summary",
+                    new Field("summary", "string", true, false, true, "literal", List.of()),
+                    "customfield_10302",
+                    new Field(
+                        "customfield_10302",
+                        "object",
+                        false,
+                        false,
+                        true,
+                        "reference",
+                        List.of(Map.of("id", "10400", "value", "Normal - Planned")))));
+          }
+        };
+    Path labeled = directory.resolve("labeled.yaml");
+    var result =
+        new TicketPuller(optionGateway, (field, value, alias) -> value)
+            .pull(
+                history,
+                "work",
+                profiles,
+                optionProfile,
+                labeled,
+                "APP-42",
+                false,
+                false,
+                "label",
+                preview -> fail("New files never overwrite"));
+    assertTrue(result.written());
+    assertEquals("Normal - Planned", ProfileLoader.readInput(labeled).get("urgency"));
+    // The default format keeps the current id objects and existing files unchanged.
+    Path ids = directory.resolve("ids.yaml");
+    new TicketPuller(optionGateway, (field, value, alias) -> value)
+        .pull(
+            history,
+            "work",
+            profiles,
+            optionProfile,
+            ids,
+            "APP-42",
+            false,
+            false,
+            "id",
+            preview -> fail("New files never overwrite"));
+    assertEquals(Map.of("id", "10400"), ProfileLoader.readInput(ids).get("urgency"));
+  }
+
+  @Test
   void unresolvedSubmissionsRemainBlockedAndPullNeverGuesses() throws Exception {
     assertThrows(ProfileException.class, () -> pull(null, false, true, request -> true));
     assertEquals(0, gateway.reads);

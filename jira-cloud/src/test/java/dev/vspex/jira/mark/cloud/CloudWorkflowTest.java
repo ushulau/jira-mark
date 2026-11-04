@@ -368,10 +368,279 @@ class CloudWorkflowTest {
     var result =
         new ProfileImporter(gateway)
             .importProfile("APP-1", "bug", Set.of(), output, directory.resolve("active"));
-    assertEquals(1, result.reviewNotes().size());
+    // User pickers are supported kinds, so assignee is imported with a readable alias.
+    assertEquals(0, result.reviewNotes().size());
     var imported = ProfileLoader.load(output);
     assertTrue(imported.fields().values().stream().allMatch(field -> field.defaultValue() == null));
-    assertFalse(imported.fields().containsKey("assignee"));
+    assertTrue(imported.fields().containsKey("assignee"));
+    assertEquals("object", imported.fields().get("assignee").type());
+  }
+
+  @Test
+  void importWritesReadableAliasesNamesOptionsAndFieldTable() throws Exception {
+    metadata.clear();
+    metadata.addAll(
+        List.of(
+            meta(
+                "summary",
+                "Summary",
+                Map.of("type", "string", "system", "summary"),
+                true,
+                false,
+                List.of()),
+            meta(
+                "customfield_10302",
+                "Change Urgency",
+                Map.of(
+                    "type",
+                    "option",
+                    "custom",
+                    "com.atlassian.jira.plugin.system.customfieldtypes:select"),
+                false,
+                false,
+                List.of(
+                    Map.of("id", "10400", "value", "Normal - Planned"),
+                    Map.of("id", "10401", "value", "Emergency"))),
+            meta(
+                "customfield_10322",
+                "Comments-Change Urgency",
+                Map.of(
+                    "type",
+                    "string",
+                    "custom",
+                    "com.atlassian.jira.plugin.system.customfieldtypes:textarea"),
+                false,
+                false,
+                List.of()),
+            meta(
+                "customfield_10305",
+                "Planned Start Date Time",
+                Map.of(
+                    "type",
+                    "datetime",
+                    "custom",
+                    "com.atlassian.jira.plugin.system.customfieldtypes:datetime"),
+                false,
+                false,
+                List.of()),
+            meta(
+                "customfield_10325",
+                "Environments Impacted",
+                Map.of(
+                    "type",
+                    "array",
+                    "items",
+                    "option",
+                    "custom",
+                    "com.atlassian.jira.plugin.system.customfieldtypes:multicheckboxes"),
+                false,
+                false,
+                List.of(
+                    Map.of("id", "10443", "value", "Production"),
+                    Map.of("id", "10452", "value", "QA"))),
+            meta(
+                "customfield_19506",
+                "Is this a Temp Change?",
+                Map.of(
+                    "type",
+                    "option",
+                    "custom",
+                    "com.atlassian.jira.plugin.system.customfieldtypes:select"),
+                false,
+                false,
+                List.of(
+                    Map.of("id", "26243", "value", "Yes"), Map.of("id", "26244", "value", "No"))),
+            meta(
+                "customfield_10010",
+                "Sprint",
+                Map.of(
+                    "type",
+                    "array",
+                    "items",
+                    "string",
+                    "custom",
+                    "com.pyxis.greenhopper.jira:gh-sprint"),
+                false,
+                false,
+                List.of()),
+            longOptionsField(),
+            assigneeField()));
+    Path output = directory.resolve("drafts/change-request.md");
+    var result =
+        new ProfileImporter(gateway)
+            .importProfile(
+                "APP-1", "change-request", Set.of(), output, directory.resolve("profiles"));
+    var imported = ProfileLoader.load(output);
+    assertTrue(
+        imported.fields().keySet().stream().noneMatch(alias -> alias.startsWith("customfield_")));
+    assertEquals("customfield_10302", imported.fields().get("changeUrgency").id());
+    assertEquals("Change Urgency", imported.fields().get("changeUrgency").name());
+    assertEquals("customfield_10322", imported.fields().get("changeUrgencyComments").id());
+    assertEquals("customfield_10305", imported.fields().get("plannedStartDateTime").id());
+    assertEquals("customfield_10325", imported.fields().get("environmentsImpacted").id());
+    assertEquals("array", imported.fields().get("environmentsImpacted").type());
+    assertEquals("customfield_19506", imported.fields().get("tempChange").id());
+    // Long option lists collapse to a count; Yes/No labels are YAML-quoted.
+    assertEquals(264, imported.fields().get("manyOptions").allowedValuesCount());
+    assertTrue(imported.fields().get("manyOptions").allowedValues().isEmpty());
+    String text = Files.readString(output);
+    assertTrue(text.contains("'Yes'"));
+    assertTrue(text.contains("<!-- jira-mark:fields:begin -->"));
+    assertTrue(text.contains("<!-- jira-mark:fields:end -->"));
+    assertTrue(text.contains("| Change Urgency |"));
+    assertTrue(text.contains("`changeUrgency`"));
+    assertTrue(text.contains("Unsupported field: customfield_10010"));
+    assertTrue(text.contains("Required field filled by Jira: assignee"));
+    // Deterministic: a second import of the same issue renders identical bytes.
+    Path again = directory.resolve("drafts/change-request-again.md");
+    new ProfileImporter(gateway)
+        .importProfile("APP-1", "change-request", Set.of(), again, directory.resolve("profiles"));
+    assertEquals(text, Files.readString(again));
+    assertEquals(0, posts.get());
+  }
+
+  static Map<String, Object> meta(
+      String id,
+      String name,
+      Map<String, Object> schema,
+      boolean required,
+      boolean hasDefault,
+      List<Object> allowed) {
+    var entry = new LinkedHashMap<String, Object>();
+    entry.put("fieldId", id);
+    entry.put("name", name);
+    entry.put("schema", schema);
+    entry.put("required", required);
+    entry.put("hasDefaultValue", hasDefault);
+    entry.put("operations", List.of("set"));
+    entry.put("allowedValues", allowed);
+    return Map.copyOf(entry);
+  }
+
+  static Map<String, Object> longOptionsField() {
+    var allowed = new ArrayList<Object>();
+    for (int i = 0; i < 264; i++) {
+      allowed.add(Map.of("id", "9" + i, "value", "Option " + i));
+    }
+    return meta(
+        "customfield_10999",
+        "Many Options",
+        Map.of(
+            "type", "option", "custom", "com.atlassian.jira.plugin.system.customfieldtypes:select"),
+        false,
+        false,
+        List.copyOf(allowed));
+  }
+
+  static Map<String, Object> assigneeField() {
+    var entry = new LinkedHashMap<String, Object>();
+    entry.put("fieldId", "assignee");
+    entry.put("name", "Assignee");
+    entry.put("schema", Map.of("type", "user", "system", "assignee"));
+    entry.put("required", true);
+    entry.put("hasDefaultValue", true);
+    entry.put("operations", List.of("set"));
+    return Map.copyOf(entry);
+  }
+
+  @Test
+  void newKindsEncodeAndRoundTrip() {
+    var encoder = new CloudFieldEncoder();
+    var decoder = new CloudFieldDecoder();
+    var date =
+        new JiraGateway.Field(
+            "customfield_1",
+            "Start",
+            "date",
+            "string",
+            false,
+            false,
+            true,
+            "date",
+            List.of(),
+            null);
+    assertEquals("2026-11-04", encoder.encode(date, "2026-11-04", "start"));
+    var datetime =
+        new JiraGateway.Field(
+            "customfield_2",
+            "Planned Start",
+            "datetime",
+            "string",
+            false,
+            false,
+            true,
+            "datetime",
+            List.of(),
+            null);
+    assertEquals(
+        "2026-11-04T06:00:00.000-0600",
+        encoder.encode(datetime, "2026-11-04T06:00:00-06:00", "startTime"));
+    assertThrows(
+        JiraFailure.class, () -> encoder.encode(datetime, "2026-11-04T06:00:00", "startTime"));
+    var dcUser =
+        new JiraGateway.Field(
+            "customfield_3",
+            "Owner",
+            "user",
+            "object",
+            false,
+            false,
+            true,
+            "user-dc",
+            List.of(),
+            null);
+    assertEquals(Map.of("name", "jdoe"), encoder.encode(dcUser, "jdoe", "owner"));
+    var epic =
+        new JiraGateway.Field(
+            "customfield_4",
+            "Epic Link",
+            "epic-link",
+            "string",
+            false,
+            false,
+            true,
+            "epic-link",
+            List.of(),
+            null);
+    assertEquals("OPS-12", encoder.encode(epic, "OPS-12", "epic"));
+    var cascading =
+        new JiraGateway.Field(
+            "customfield_5",
+            "Cascade",
+            "cascading",
+            "object",
+            false,
+            false,
+            true,
+            "cascading",
+            List.of(),
+            null);
+    assertEquals(
+        Map.of("value", "Parent", "child", Map.of("value", "Child")),
+        encoder.encode(cascading, "Parent / Child", "cascade"));
+    // Bare labels resolve through live metadata on input.
+    var select =
+        new JiraGateway.Field(
+            "customfield_6",
+            "Change Urgency",
+            "select",
+            "object",
+            false,
+            false,
+            true,
+            "reference",
+            List.of(Map.of("id", "10400", "value", "Normal - Planned")),
+            null);
+    assertEquals(Map.of("id", "10400"), encoder.encode(select, "Normal - Planned", "urgency"));
+    assertEquals(
+        Map.of("id", "10400"),
+        encoder.encode(select, Map.of("value", "Normal - Planned"), "urgency"));
+    // Decoders keep id objects; user maps become shorthand strings.
+    var userDef = new FieldDefinition("owner", "object", false, null, List.of());
+    assertEquals("jdoe", decoder.decode(userDef, Map.of("name", "jdoe", "key", "jdoe"), "owner"));
+    var optionDef = new FieldDefinition("urgency", "object", false, null, List.of());
+    assertEquals(
+        Map.of("id", "10400"), decoder.decode(optionDef, Map.of("id", "10400"), "urgency"));
   }
 
   @Test

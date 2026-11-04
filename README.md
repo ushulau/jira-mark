@@ -27,6 +27,7 @@ approved release.
 | Create an issue or handle a repeated input | `jiraCreate` | `create` | Read metadata, then explicitly create or update |
 | Update an explicit or locally bound issue | `jiraUpdate` | � | Validate and update; never creates |
 | Pull current issue values into a new or existing ticket file | `jiraPull` | `pull` | Read standard or configured fields; never modifies Jira |
+| Compare a profile with current Jira metadata | `jiraSyncProfile` | `sync-profile` | Read metadata; never modifies Jira |
 
 Remote commands require a named connection, supplied as an option or a Gradle
 repository default. The plugin does not attach its
@@ -348,13 +349,17 @@ project and issue type IDs so YAML treats them as strings.
 | `type` | Defaults to `string` |
 | `required` | Boolean; defaults to `false` |
 | `default` | Optional value with the declared type |
-| `allowedValues` | Optional list of complete allowed values |
+| `allowedValues` | Optional list of complete allowed values, or `{id, value}` option objects |
+| `allowedValuesCount` | Informational option count used instead of a long `allowedValues` list |
+| `name` | Informational Jira field name written by imports; never sent to Jira |
+
+Profiles using `name`, object-shaped `allowedValues`, or `allowedValuesCount` require plugin version `0.8.0` or later; older versions reject these keys as unknown.
 
 Supported local types are `string`, `integer`, `number`, `boolean`,
 `string-list`, `object`, and `array`. Every profile must define `summary` as
 a required string mapped to Jira's `summary` field.
 
-Aliases and field IDs must start with an ASCII letter and contain only letters,
+Field aliases may not start with `$`; `$clear` is reserved for input files (see below). Aliases and field IDs must start with an ASCII letter and contain only letters,
 digits, or underscores. `project` and `issuetype` are reserved, regardless of
 case. Two aliases cannot map to the same Jira field.
 
@@ -372,7 +377,7 @@ draft uses `customfield_10042`. This ID and `APP` are examples; replace them wit
 your Jira configuration before using remote commands. The supplied
 `dev-rig/jira/profiles/backend-bug.md` profile includes this example mapping.
 
-`allowedValues` compares the entire value. For a list field, write complete lists,
+`allowedValues` compares the entire value, except for object-shaped option entries, which accept an option id (`{id: '10400'}`), an option label (`{value: 'Normal - Planned'}`), or a bare label string. For a list field, write complete lists,
 for example `allowedValues: [[backend], [backend, urgent]]`. Defaults and choices
 are type-checked when profiles load. Numeric comparison uses Java value equality,
 so numeric representations that differ between YAML, JSON, and CLI parsing can
@@ -386,7 +391,7 @@ Values resolve in this order:
 2. YAML or JSON input, keyed by local alias.
 3. Repeated `--field` overrides; the last occurrence wins.
 
-Unknown aliases and wrong types are errors. Required values cannot be null, blank
+To empty a field on update, list its alias under the reserved top-level `$clear` key (`$clear: [changeUrgencyComments]`); single-value fields are sent as `null` and array fields as `[]`. `$clear` is rejected on create and for required fields. Unknown aliases and wrong types are errors. Required values cannot be null, blank
 strings, empty lists, or empty objects; `false` and `0` are valid. An input
 `null` clears a local default, and optional null fields are omitted. Explicit
 empty strings never fall back to defaults.
@@ -574,7 +579,7 @@ The import destination must be outside the configured active profiles directory.
 Use `jira/profile-drafts/imported-bug.md` rather than
 `jira/profiles/imported-bug.md`, then review and move the draft to activate it.
 
-Import uses create metadata to define fields and records unsupported fields as
+Import writes deterministic readable aliases derived from Jira field names, plus the Jira field id, field name, and allowed option values for every supported field. Re-importing keeps existing aliases, and colliding aliases gain the field's numeric suffix. Tune generation with `--alias-style=full|short` (default `short`), `--max-alias-length=N` (default 40; long aliases are kept with a review note), `--max-allowed-values=N` (default 25; longer option lists collapse to `allowedValuesCount`), and repeatable `--alias-drop-words`. The profile body gains a generated field reference table between `<!-- jira-mark:fields:begin -->` and `<!-- jira-mark:fields:end -->` markers; later imports and `jiraSyncProfile --write-docs` rewrite only that section and never hand-written text. Import uses create metadata to define fields and records unsupported fields as
 review notes. It preserves the source issue key, import date, and project/type IDs,
 without writing the full issue response. Summary, description, user fields,
 comments, and attachments are not imported as defaults.
@@ -780,7 +785,7 @@ reconciliation before pulling.
 The input file must use `.json`, `.yaml`, or `.yml`; missing files are created
 after the response has been validated. With a profile, pull
 fetches only the selected profile's Jira fields and maps their IDs back to local
-aliases, including custom-field aliases. Reference objects are normalized to
+aliases, including custom-field aliases. Pulled option references use `{"id":"..."}` by default; `--option-format=label` (CLI: `--option-format label`) writes bare labels instead. Reference objects are normalized to
 `{"id":"..."}`. Explicit remote nulls are written as nulls to suppress profile
 defaults. Unsupported values or values that violate the profile stop the pull.
 The command needs read access, not issue edit permissions, and never creates,
@@ -819,6 +824,18 @@ tasks.named('jiraPull') {
 }
 ```
 
+### 8. Check profile drift without changing Jira
+
+Profiles drift when administrators add, remove, or reconfigure fields. Compare a profile with fresh create metadata:
+
+```powershell
+.\gradlew.bat -p dev-rig jiraSyncProfile --connection=example --ticket-profile=backend-bug
+
+& $jiraMarkCli sync-profile --connection example --profiles-dir dev-rig/jira/profiles --profile backend-bug
+```
+
+The report lists added (`+`), removed (`-`), and changed (`~`) fields with unchanged counts. Sync is read-only by default. `--write-docs` rewrites only the generated field table in the profile file, and `--fail-on-drift` exits non-zero when any drift is reported, for CI. `jiraValidateProfiles` stays offline and also checks the new profile keys and alias rules.
+
 ## Jira field support
 
 Creation requires every configured field to be available for creation; updates
@@ -835,14 +852,21 @@ pagination is rejected.
 | String array, including labels | `string-list` | JSON string array |
 | Priority, option, component, version | `object` | Reference object |
 | Option/component/version array | `array` | Array of reference objects |
+| Multi-select, checkboxes | `array` | Array of option ids or labels |
+| Date | `string` | `yyyy-MM-dd` |
+| Date and time | `string` | ISO-8601 with offset; sent as `yyyy-MM-dd'T'HH:mm:ss.SSSZ` |
+| User picker, assignee, reporter | `object` | Username (Data Center) or account ID (Cloud) |
+| Multiple users | `array` | Array of the above |
+| Cascading select | `object` | `{id, child: {id}}`, or `Parent / Child` labels |
+| Epic link | `string` | Issue key such as `APP-12` |
 
-References contain exactly one selector: `id`, `name`, `value`, or `key`.
+References contain exactly one selector: `id`, `name`, `value`, or `key`. Option fields also accept a bare label string, resolved against live metadata (exact match first, then case-insensitive); offline previews resolve from the profile's `allowedValues` and leave unknown labels in place.
 For example, `{"name":"Medium"}` is resolved to an ID if it matches exactly one
 metadata choice. Without choices, an explicit `id` is required. Each array
 element is checked independently. Offline `object` and `array` validation
 checks only the outer type; remote validation checks supported nested references.
 
-Standard custom textfield, textarea, float, select, and multiselect schemas are
+Standard textfield, textarea, url, float, select, radio, multiselect, multicheckboxes, cascading select, date, datetime, user and multi-user picker, labels, version, and epic-link schemas are
 supported. Unsupported schemas fail when a value is supplied. Remote required
 fields cannot be made optional by a local profile. Jira defaults can satisfy
 omitted remote requirements, but explicit empty values cannot.
@@ -894,19 +918,19 @@ import protection, CLI prompting, packaged artifacts, repository defaults and
 command-line overrides, Gradle property/environment precedence, and Gradle
 configuration-cache reuse with credential rotation for both Basic and Bearer authentication.
 Synthetic Data Center tests exercise API v2 metadata pagination, profile import,
-text encoding, creation, and non-retry behavior.
+text encoding, creation, and non-retry behavior. Custom-field coverage includes deterministic alias generation, date/datetime/user/cascading/epic-link encoding, option labels, field clearing on update, readable import output with a generated field table, and profile drift checks.
 Repeat-publication tests cover file identity, create/update/cancel choices,
 local locking, unresolved outcomes, Cloud/Data Center edit encoding, and
 configuration-cache reuse with the Gradle console service.
-Pull tests cover new file and parent-directory creation, standard-field pulls
+Pull tests cover new file and parent-directory creation, standard-field pulls, label-format pulls,
 without profiles, JSON/YAML round trips, aliases, nulls, backups, preview and
 confirmation, local edits during a pull, history binding, Cloud/Data Center
 read-only requests, safe ADF conversion, and configuration-cache reuse.
 Remote behavior has not been verified against a
 live Jira instance.
 
-Not implemented: OAuth/scoped-token gateway routing, legacy expanded createmeta, user/date
-fields, cascading selects, app-specific field encodings, dynamic autocomplete,
+Not implemented: OAuth/scoped-token gateway routing, legacy expanded createmeta,
+app-specific field encodings, dynamic autocomplete,
 metadata caching, Markdown rendering, automatic templates, automatic creation
 recovery, global duplicate detection, and Gradle field prompting.
 

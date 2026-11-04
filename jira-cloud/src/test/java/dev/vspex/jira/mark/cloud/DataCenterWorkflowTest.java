@@ -48,7 +48,8 @@ class DataCenterWorkflowTest {
                   "string",
                   "custom",
                   "com.atlassian.jira.plugin.system.customfieldtypes:textarea"),
-              false),
+              false,
+              "Acceptance Criteria"),
           field("labels", Map.of("type", "array", "items", "string"), false),
           field("components", Map.of("type", "array", "items", "component"), false));
 
@@ -172,7 +173,7 @@ class DataCenterWorkflowTest {
             "h2. Details\n* wiki markup",
             "environment",
             "Linux",
-            "customfield_42",
+            "acceptanceCriteria",
             "*Custom text*");
     var workflow = new JiraWorkflow(gateway, new CloudFieldEncoder());
     workflow.validate(profile, input, List.of());
@@ -181,8 +182,10 @@ class DataCenterWorkflowTest {
     assertEquals(1, posts.get());
     assertEquals(connection.baseUrl() + "/browse/APP-42", created.url().toString());
     var payload = (Map<?, ?>) submitted.get("fields");
+    assertEquals(input.get("description"), payload.get("description"));
+    assertEquals(input.get("environment"), payload.get("environment"));
+    assertEquals(input.get("acceptanceCriteria"), payload.get("customfield_42"));
     for (String textField : List.of("description", "environment", "customfield_42")) {
-      assertEquals(input.get(textField), payload.get(textField));
       assertInstanceOf(String.class, payload.get(textField));
     }
     assertEquals(List.of("backend"), payload.get("labels"));
@@ -227,8 +230,20 @@ class DataCenterWorkflowTest {
 
   private static Map<String, Object> field(
       String id, Map<String, Object> schema, boolean required) {
-    return Map.of(
-        "fieldId", id, "schema", schema, "required", required, "operations", List.of("set"));
+    return field(id, schema, required, null);
+  }
+
+  private static Map<String, Object> field(
+      String id, Map<String, Object> schema, boolean required, String name) {
+    var entry = new java.util.LinkedHashMap<String, Object>();
+    entry.put("fieldId", id);
+    entry.put("schema", schema);
+    entry.put("required", required);
+    entry.put("operations", List.of("set"));
+    if (name != null) {
+      entry.put("name", name);
+    }
+    return Map.copyOf(entry);
   }
 
   private static void respond(HttpExchange exchange, int status, Object body) throws IOException {

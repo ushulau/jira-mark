@@ -63,6 +63,31 @@ public final class TicketPuller {
       boolean overwrite,
       Function<Preview, Boolean> confirm)
       throws IOException {
+    return pull(
+        historyDirectory,
+        connection,
+        profilesDirectory,
+        profile,
+        inputFile,
+        explicitIssue,
+        dryRun,
+        overwrite,
+        "id",
+        confirm);
+  }
+
+  public Result pull(
+      Path historyDirectory,
+      String connection,
+      Path profilesDirectory,
+      Profile profile,
+      Path inputFile,
+      String explicitIssue,
+      boolean dryRun,
+      boolean overwrite,
+      String optionFormat,
+      Function<Preview, Boolean> confirm)
+      throws IOException {
     if (inputFile == null)
       throw new ProfileException(
           "Pull requires --input pointing to a .json, .yaml, or .yml file; missing files are created with --issue");
@@ -111,6 +136,21 @@ public final class TicketPuller {
             REMOTE_VALIDATION,
             "The issue's project or issue type does not match the profile and publication record");
       }
+      if (optionFormat == null || optionFormat.isBlank()) {
+        optionFormat = "id";
+      }
+      if (!List.of("id", "label").contains(optionFormat)) {
+        throw new ProfileException("--option-format must be id or label");
+      }
+      Map<String, JiraGateway.Field> choicesById = Map.of();
+      if (optionFormat.equals("label")) {
+        try {
+          choicesById = gateway.metadata(remote.projectId(), remote.issueTypeId()).fields();
+        } catch (RuntimeException lookup) {
+          // Label mapping is best-effort; ids remain when metadata is unavailable.
+          choicesById = Map.of();
+        }
+      }
       var pulled = new LinkedHashMap<String, Object>(local);
       var changed = new ArrayList<String>();
       for (var entry : profile.fields().entrySet()) {
@@ -122,6 +162,12 @@ public final class TicketPuller {
               "A requested Jira field is unavailable; the input file was not changed");
         }
         Object value = decoder.decode(field, remote.fields().get(field.id()), alias);
+        if (optionFormat.equals("label")) {
+          var meta = choicesById.get(field.id());
+          if (meta != null && !meta.choices().isEmpty()) {
+            value = OptionLabels.toLabel(meta.choices(), value);
+          }
+        }
         pulled.put(alias, value);
         if (!local.containsKey(alias)
             || !Json.write(PublicationJournal.canonical(value))

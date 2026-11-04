@@ -53,13 +53,19 @@ public final class ProfileLoader {
     Set<String> ids = new HashSet<>();
     for (var entry : definitions.entrySet()) {
       String alias = entry.getKey();
+      if (alias.startsWith("$")) {
+        throw new ProfileException("Field aliases may not start with $: " + alias);
+      }
       if (!alias.matches("[A-Za-z][A-Za-z0-9_]*")
           || Set.of("project", "issuetype").contains(alias.toLowerCase(java.util.Locale.ROOT))) {
         throw new ProfileException("Invalid or reserved field alias: " + alias);
       }
       Map<String, Object> config = mapping(entry.getValue(), "field " + alias);
       onlyKeys(
-          config, Set.of("id", "type", "required", "default", "allowedValues"), "field " + alias);
+          config,
+          Set.of(
+              "id", "type", "required", "default", "allowedValues", "name", "allowedValuesCount"),
+          "field " + alias);
       String id = config.containsKey("id") ? requiredText(config, "id") : alias;
       if (!id.matches("[A-Za-z][A-Za-z0-9_]*")
           || Set.of("project", "issuetype").contains(id.toLowerCase(java.util.Locale.ROOT))
@@ -79,10 +85,49 @@ public final class ProfileLoader {
           || allowedList.stream().anyMatch(java.util.Objects::isNull)) {
         throw new ProfileException("allowedValues must be a list without nulls for field " + alias);
       }
+      for (Object item : allowedList) {
+        if (item instanceof Map<?, ?> map) {
+          if (!(map.get("id") instanceof String)
+              || !(map.get("value") instanceof String || map.get("name") instanceof String)
+              || map.keySet().stream().anyMatch(key -> !(key instanceof String))) {
+            throw new ProfileException(
+                "allowedValues entries must be scalars or {id, value} objects for field " + alias);
+          }
+        } else if (!(item instanceof String || item instanceof Number || item instanceof Boolean)) {
+          throw new ProfileException(
+              "allowedValues must be scalars or {id, value} objects for field " + alias);
+        }
+      }
+      String displayName = null;
+      if (config.containsKey("name")) {
+        if (!(config.get("name") instanceof String nameText) || nameText.isBlank()) {
+          throw new ProfileException("name must be a nonempty string for field " + alias);
+        }
+        displayName = nameText;
+      }
+      Integer allowedCount = null;
+      if (config.containsKey("allowedValuesCount")) {
+        Object count = config.get("allowedValuesCount");
+        if (!(count instanceof Number number) || number.intValue() < 0) {
+          throw new ProfileException(
+              "allowedValuesCount must be a non-negative integer for field " + alias);
+        }
+        allowedCount = number.intValue();
+      }
       FieldDefinition definition =
           new FieldDefinition(
-              id, type, (Boolean) required, config.get("default"), new ArrayList<>(allowedList));
+              id,
+              type,
+              (Boolean) required,
+              config.get("default"),
+              new ArrayList<>(allowedList),
+              displayName,
+              allowedCount);
       for (Object value : allowedList) {
+        // Object-shaped entries ({id, value}) are validated by shape above, not by value type.
+        if (value instanceof Map<?, ?>) {
+          continue;
+        }
         if (!definition.accepts(value)) {
           throw new ProfileException("allowedValues has an incorrect type for field " + alias);
         }
